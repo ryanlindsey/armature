@@ -118,4 +118,18 @@ describe('selectNext', () => {
       expect(result.because).not.toMatch(/filter|matched nothing/)
     }
   })
+
+  it('distinguishes when epic filter matches no items on board', () => {
+    const s = snap([
+      epic1,
+      make('web', 5, 'Todo', 'child', epic1.ref),
+    ])
+    const nonexistentEpic = { owner: 'acme', repo: 'platform', number: 999 }
+    const result = selectNext(s, { epic: nonexistentEpic })
+    expect(result.kind).toBe('blocked')
+    if (result.kind === 'blocked') {
+      expect(result.because).toMatch(/filter|matched nothing|acme\/platform#999/)
+      expect(result.because).not.toContain('0 item(s) were considered')
+    }
+  })
 })

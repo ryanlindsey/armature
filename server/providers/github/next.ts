@@ -43,6 +43,12 @@ export function selectNext(
         because: `No items matching filter "${options.repo}" found on board.`,
       }
     }
+    if (underEpic.length === 0 && options.epic) {
+      return {
+        kind: 'blocked',
+        because: `No items matching epic filter ${formatRef(options.epic)} found on board.`,
+      }
+    }
     const scope = options.repo ? ` in ${options.repo}` : ''
     return {
       kind: 'blocked',
