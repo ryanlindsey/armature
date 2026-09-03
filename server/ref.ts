@@ -6,7 +6,7 @@ export type WorkItemRef = {
 
 const SEGMENT = '[A-Za-z0-9._-]+'
 const SHORTHAND = new RegExp(`^(${SEGMENT})\\/(${SEGMENT})#(\\d+)$`)
-const URL_FORM = new RegExp(`^https?:\\/\\/[^/]+\\/(${SEGMENT})\\/(${SEGMENT})\\/issues\\/(\\d+)`)
+const URL_FORM = new RegExp(`^https?:\\/\\/[^/]+\\/(${SEGMENT})\\/(${SEGMENT})\\/issues\\/(\\d+)(?:[/?#]|$)`)
 
 export class BareRefError extends Error {
   constructor(input: string) {

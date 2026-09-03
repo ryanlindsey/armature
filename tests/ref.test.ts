@@ -34,6 +34,28 @@ describe('parseRef', () => {
   it('refuses a repository with no number', () => {
     expect(() => parseRef('acme/web')).toThrow(BareRefError)
   })
+
+  it('refuses a URL with trailing garbage attached to the number', () => {
+    expect(() => parseRef('https://github.com/acme/web/issues/278abc')).toThrow(BareRefError)
+  })
+
+  it('accepts a URL with a trailing path (e.g., /comments)', () => {
+    expect(parseRef('https://github.com/acme/web/issues/278/comments')).toEqual({
+      owner: 'acme', repo: 'web', number: 278,
+    })
+  })
+
+  it('accepts a URL with a fragment (e.g., #issuecomment-12345)', () => {
+    expect(parseRef('https://github.com/acme/web/issues/278#issuecomment-12345')).toEqual({
+      owner: 'acme', repo: 'web', number: 278,
+    })
+  })
+
+  it('accepts a URL with a query string', () => {
+    expect(parseRef('https://github.com/acme/web/issues/278?x=1')).toEqual({
+      owner: 'acme', repo: 'web', number: 278,
+    })
+  })
 })
 
 describe('formatRef', () => {
