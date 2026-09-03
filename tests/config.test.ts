@@ -93,4 +93,28 @@ describe('resolveConfig', () => {
     })
     expect(c.verify).toEqual([])
   })
+
+  it('uses the user config board when no repo config board and no environment', () => {
+    const c = resolveConfig({
+      originUrl: 'git@github.com:acme/web.git',
+      repoConfig: {},
+      userConfig: { board },
+      env: {},
+      boardsContainingRepo: [],
+    })
+    expect(c.board.number).toBe(1)
+    expect(c.boardSource).toBe('user')
+  })
+
+  it('throws when no board is found anywhere', () => {
+    expect(() =>
+      resolveConfig({
+        originUrl: 'git@github.com:acme/web.git',
+        repoConfig: {},
+        userConfig: {},
+        env: {},
+        boardsContainingRepo: [],
+      }),
+    ).toThrow(/acme\/web.*\.armature\.json.*ARMATURE_BOARD/)
+  })
 })
