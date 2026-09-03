@@ -53,17 +53,40 @@ export class GitHubClient {
       body: JSON.stringify({ query, variables }),
     })
 
+    // Primary rate limit: 403 with x-ratelimit-remaining: 0
     if (response.status === 403 && response.headers.get('x-ratelimit-remaining') === '0') {
       const reset = response.headers.get('x-ratelimit-reset')
       throw new RateLimitError(reset ? new Date(Number(reset) * 1000) : null)
     }
 
-    const payload = (await response.json()) as { data?: T; errors?: { type?: string; message: string }[] }
+    const payload = (await response.json()) as {
+      data?: T
+      errors?: { type?: string; message: string }[]
+      message?: string
+      documentation_url?: string
+    }
+
+    // Check for secondary rate limit before processing GraphQL errors
+    // Secondary rate limit: 403/429 with retry-after header or message mentioning rate limit
+    const retryAfter = response.headers.get('retry-after')
+    const isSecondaryRateLimit =
+      response.status === 429 ||
+      (response.status === 403 && (retryAfter || /secondary rate limit|abuse detection/i.test(payload.message || '')))
+
+    if (isSecondaryRateLimit) {
+      const resetAt = retryAfter ? new Date(Date.now() + Number(retryAfter) * 1000) : null
+      throw new RateLimitError(resetAt)
+    }
 
     if (payload.errors?.length) {
       if (payload.errors.some((e) => e.type === 'INSUFFICIENT_SCOPES')) throw new MissingScopeError()
       // Partial data alongside errors is the failure mode that hides corruption. Refuse it.
       throw new GraphQLError(payload.errors.map((e) => e.message).join('; '))
+    }
+
+    // If response is not ok and has a message, include it in the error
+    if (!response.ok && payload.message) {
+      throw new GraphQLError(`GitHub API error (${response.status}): ${payload.message}`)
     }
 
     if (!payload.data) throw new GraphQLError('GitHub returned no data and no error.')

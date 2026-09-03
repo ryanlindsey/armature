@@ -73,4 +73,61 @@ describe('GitHubClient error mapping', () => {
     const err = await client.graphql('query', {}).catch((e: Error) => e)
     expect((err as Error).message).not.toContain('secret-value')
   })
+
+  it('raises on a secondary rate limit (403 with message)', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond(
+        { message: 'You have exceeded a secondary rate limit. Please wait a few moments before you try again.' },
+        { status: 403 },
+      ),
+    )
+    await expect(client.graphql('query', {})).rejects.toThrow(RateLimitError)
+  })
+
+  it('raises on a 429 response with retry-after', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond({ message: 'Too many requests' }, {
+        status: 429,
+        headers: { 'retry-after': '60' },
+      }),
+    )
+    await expect(client.graphql('query', {})).rejects.toThrow(RateLimitError)
+  })
+
+  it('includes GitHub message in error for non-rate-limit 403', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond({ message: 'Bad credentials' }, { status: 403 }),
+    )
+    const err = await client.graphql('query', {}).catch((e: Error) => e)
+    expect((err as Error).message).toContain('Bad credentials')
+    expect((err as Error).message).toContain('403')
+  })
+
+  it('includes GitHub message in error for other non-ok responses', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond({ message: 'Internal Server Error' }, { status: 500 }),
+    )
+    const err = await client.graphql('query', {}).catch((e: Error) => e)
+    expect((err as Error).message).toContain('Internal Server Error')
+    expect((err as Error).message).toContain('500')
+  })
+
+  it('never includes credentials in secondary rate limit error', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond(
+        { message: 'You have exceeded a secondary rate limit.' },
+        { status: 403, headers: { 'retry-after': '60' } },
+      ),
+    )
+    const err = await client.graphql('query', {}).catch((e: Error) => e)
+    expect((err as Error).message).not.toContain('secret-value')
+  })
+
+  it('never includes credentials in non-rate-limit error messages', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond({ message: 'Bad credentials' }, { status: 403 }),
+    )
+    const err = await client.graphql('query', {}).catch((e: Error) => e)
+    expect((err as Error).message).not.toContain('secret-value')
+  })
 })
