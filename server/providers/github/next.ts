@@ -27,7 +27,7 @@ export function selectNext(
 
   const children = snapshot.items.filter((i) => !isEpic(i))
   const inRepo = options.repo
-    ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}` === options.repo)
+    ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === options.repo.toLowerCase())
     : children
   const underEpic = options.epic
     ? inRepo.filter((i) => i.parent && key(i.parent) === key(options.epic!))
@@ -36,6 +36,12 @@ export function selectNext(
   const actionable = underEpic.filter((i) => i.status === todo && i.state === 'OPEN')
 
   if (actionable.length === 0) {
+    if (inRepo.length === 0 && options.repo) {
+      return {
+        kind: 'blocked',
+        because: `No items matching filter "${options.repo}" found on board.`,
+      }
+    }
     const scope = options.repo ? ` in ${options.repo}` : ''
     return {
       kind: 'blocked',
