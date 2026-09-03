@@ -1,6 +1,6 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
-import type { BoardItem } from '../types.js'
+import type { BoardItem, BoardSnapshot } from '../types.js'
 import { GitHubClient } from './client.js'
 
 export type ItemDetail = BoardItem & {
@@ -193,4 +193,84 @@ export async function getItem(
     // is not called here in v1.
     epic: epicFromLink,
   }
+}
+
+export type ItemReader = (ref: WorkItemRef) => Promise<ItemDetail>
+
+export class StaleItemError extends Error {
+  constructor(ref: WorkItemRef, expected: string, found: string | null) {
+    super(
+      `${formatRef(ref)} was expected to be "${expected}" but is "${found ?? 'unset'}". ` +
+        `Someone or something else moved it. Armature made no change.`,
+    )
+    this.name = 'StaleItemError'
+  }
+}
+
+export class UnverifiedWriteError extends Error {
+  constructor(ref: WorkItemRef, intended: string, observed: string | null) {
+    super(
+      `Set ${formatRef(ref)} to "${intended}" but reading it back shows "${observed ?? 'unset'}". ` +
+        `Treat the board as unchanged and investigate before retrying.`,
+    )
+    this.name = 'UnverifiedWriteError'
+  }
+}
+
+const SET_STATUS = `
+mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}
+  }){ projectV2Item { id } }
+}`
+
+export async function setStatus(
+  client: GitHubClient,
+  board: BoardRef,
+  snapshot: BoardSnapshot,
+  ref: WorkItemRef,
+  status: string,
+  options: { expectStatus?: string; dryRun?: boolean; read?: ItemReader } = {},
+): Promise<ItemDetail> {
+  const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
+
+  const option = snapshot.statusOptions.find((o) => o.name === status)
+  if (!option) {
+    const names = snapshot.statusOptions.map((o) => o.name).join(', ')
+    throw new Error(`This board has no status "${status}". It offers: ${names}.`)
+  }
+
+  const before = await read(ref)
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
+
+  if (options.expectStatus !== undefined && before.status !== options.expectStatus) {
+    throw new StaleItemError(ref, options.expectStatus, before.status)
+  }
+
+  if (options.dryRun) return { ...before, status }
+
+  await client.graphql(SET_STATUS, {
+    project: snapshot.id,
+    item: before.projectItemId,
+    field: snapshot.statusFieldId,
+    option: option.id,
+  })
+
+  const after = await read(ref)
+  if (after.status !== status) throw new UnverifiedWriteError(ref, status, after.status)
+  return after
+}
+
+export async function claim(
+  client: GitHubClient,
+  board: BoardRef,
+  snapshot: BoardSnapshot,
+  ref: WorkItemRef,
+  options: { dryRun?: boolean; read?: ItemReader } = {},
+): Promise<ItemDetail> {
+  return setStatus(client, board, snapshot, ref, snapshot.semantics.claimed, {
+    expectStatus: snapshot.semantics.todo,
+    dryRun: options.dryRun,
+    read: options.read,
+  })
 }
