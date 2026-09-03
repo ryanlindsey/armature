@@ -274,3 +274,65 @@ export async function claim(
     read: options.read,
   })
 }
+
+import type { CreateInput } from '../types.js'
+
+export class OrphanedIssueError extends Error {
+  constructor(ref: WorkItemRef, cause: string) {
+    super(
+      `Created ${formatRef(ref)} but could not add it to the board: ${cause}. ` +
+        `The issue exists and is not tracked. Add it to the board or close it.`,
+    )
+    this.name = 'OrphanedIssueError'
+  }
+}
+
+const REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`
+
+const CREATE_ISSUE = `
+mutation($repo:ID!,$title:String!,$body:String!){
+  createIssue(input:{repositoryId:$repo,title:$title,body:$body}){ issue{ id number } }
+}`
+
+const ADD_TO_BOARD = `
+mutation($project:ID!,$content:ID!){
+  addProjectV2ItemById(input:{projectId:$project,contentId:$content}){ item{ id } }
+}`
+
+export async function createItem(
+  client: GitHubClient,
+  board: BoardRef,
+  snapshot: BoardSnapshot,
+  input: CreateInput,
+  options: { dryRun?: boolean; read?: ItemReader } = {},
+): Promise<ItemDetail> {
+  const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
+  const ref = { owner: input.owner, repo: input.repo, number: 0 }
+
+  if (options.dryRun) {
+    return {
+      ref, id: '(dry-run)', title: input.title, body: input.body, state: 'OPEN',
+      status: snapshot.semantics.todo, projectItemId: '(dry-run)', parent: input.parent ?? null,
+      epic: input.parent ?? null,
+    }
+  }
+
+  const repo = await client.graphql<any>(REPO_ID, { owner: input.owner, name: input.repo })
+  const created = await client.graphql<any>(CREATE_ISSUE, {
+    repo: repo.repository.id,
+    title: input.title,
+    body: input.body,
+  })
+
+  const number = created.createIssue.issue.number as number
+  const contentId = created.createIssue.issue.id as string
+  const madeRef = { owner: input.owner, repo: input.repo, number }
+
+  try {
+    await client.graphql(ADD_TO_BOARD, { project: snapshot.id, content: contentId })
+  } catch (error) {
+    throw new OrphanedIssueError(madeRef, error instanceof Error ? error.message : String(error))
+  }
+
+  return read(madeRef)
+}
