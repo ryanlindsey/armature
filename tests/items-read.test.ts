@@ -3,46 +3,108 @@ import { getItem, parseEpicFromBody } from '../server/providers/github/items.js'
 import { GitHubClient } from '../server/providers/github/client.js'
 
 describe('parseEpicFromBody', () => {
-  it('reads a cross-repository epic reference', () => {
-    const body = 'Part of the telemetry epic in acme/platform (Epic 4, issue #339).'
-    expect(parseEpicFromBody(body)).toEqual({ owner: 'acme', repo: 'platform', number: 339 })
-  })
+  // --- Round 2 policy ---
+  // Round 1 required "epic" to co-occur on the line with a reference, inferred from free
+  // prose. The re-reviewer broke that with a fourth counterexample (see below) where "epic"
+  // and an unrelated reference legitimately share a line. Rather than add a fourth heuristic,
+  // the controller replaced inference with an explicit DECLARATION line: the entire trimmed
+  // line must be "Epic: owner/repo#N" or "Part of: owner/repo#N" (case-insensitive label),
+  // with an optional leading markdown list marker and an optional bold wrapper, and nothing
+  // else. Prose is never parsed, no matter what it says.
 
-  // NOTE: this input was changed from the original plan's 'Part of acme/platform#339.'
-  // That body carries no "epic" marker, and the controller's ruling for Finding 1 requires
-  // one on the same line as any reference (prose or shorthand) before it counts. The original
-  // wording directly contradicts the new policy, so the wording was changed rather than the
-  // policy; see the fix report for the explicit call-out.
-  it('reads a shorthand reference', () => {
-    expect(parseEpicFromBody('Part of the epic, acme/platform#339.')).toEqual({
+  it('reads an "Epic:" declaration line', () => {
+    expect(parseEpicFromBody('Epic: acme/platform#339')).toEqual({
       owner: 'acme', repo: 'platform', number: 339,
     })
   })
 
-  // A bare number in a body names an issue in some other repository. Refuse to guess.
-  it('returns null for a bare number', () => {
-    expect(parseEpicFromBody('Part of the epic, issue #339.')).toBeNull()
+  it('reads a "Part of:" declaration line', () => {
+    expect(parseEpicFromBody('Part of: acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+  })
+
+  it('accepts a leading markdown list marker', () => {
+    expect(parseEpicFromBody('- Epic: acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+  })
+
+  it('accepts a bold label', () => {
+    expect(parseEpicFromBody('**Epic:** acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+  })
+
+  it('accepts the whole declaration bolded', () => {
+    expect(parseEpicFromBody('**Epic: acme/platform#339**')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+  })
+
+  it('accepts a bolded label combined with a list marker', () => {
+    expect(parseEpicFromBody('* **Epic:** acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+  })
+
+  it('finds the declaration line among surrounding prose', () => {
+    const body = [
+      'This fixes a crash under load.',
+      '',
+      'Epic: acme/platform#339',
+      '',
+      'Also see the discussion above.',
+    ].join('\n')
+    expect(parseEpicFromBody(body)).toEqual({ owner: 'acme', repo: 'platform', number: 339 })
   })
 
   it('returns null when there is no reference', () => {
     expect(parseEpicFromBody('No epic here.')).toBeNull()
   })
 
-  // --- Finding 1 regression suite: the reviewer's known-bad inputs ---
-  // These three are the exact (or, for the second, a faithful reconstruction of the described)
-  // inputs the reviewer used to disprove the prior implementation's self-assessment.
+  it('returns null for a bare number', () => {
+    expect(parseEpicFromBody('Part of the epic, issue #339.')).toBeNull()
+  })
 
-  it('does not attach an unrelated parenthetical reference (reviewer case 1)', () => {
+  it('returns null when the line carries anything else ("nothing else on the line")', () => {
+    expect(parseEpicFromBody('Epic: acme/platform#339.')).toBeNull()
+  })
+
+  it('returns null and does not guess when two declarations disagree', () => {
+    const body = 'Epic: acme/platform#339\nEpic: acme/other#42'
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('accepts a repeated declaration of the same epic (not a disagreement)', () => {
+    const body = 'Epic: acme/platform#339\nPart of: acme/platform#339'
+    expect(parseEpicFromBody(body)).toEqual({ owner: 'acme', repo: 'platform', number: 339 })
+  })
+
+  it('does not parse a declaration out of a fenced code example', () => {
+    // This is why code-stripping still earns its place under the strict line format: a
+    // fenced line carries no backticks of its own, so a fenced block whose only content is
+    // exactly "Epic: acme/web#1" would otherwise satisfy the format verbatim.
+    const body = ['Convention example:', '```', 'Epic: acme/web#1', '```'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('does not un-wrap an inline code span (inline stripping was dropped as redundant)', () => {
+    // Under the strict full-line match, an inline-code-wrapped declaration fails whether or
+    // not the span is stripped: stripped, the line becomes empty; unstripped, the backtick
+    // blocks the required "Epic:"/"Part of:" prefix. Either way this must be null — this
+    // test pins that "fails closed" behavior now that inline-span stripping is gone.
+    expect(parseEpicFromBody('`Epic: acme/web#1`')).toBeNull()
+  })
+
+  // --- Regression suite: every input previously shown to produce a wrong, silent epic ---
+
+  it('reviewer case 1: an unrelated parenthetical is not a declaration', () => {
     const body = 'Filed in acme/support (ticket #123) for tracking, unrelated to this issue.'
     expect(parseEpicFromBody(body)).toBeNull()
   })
 
-  it('does not parse a reference out of a fenced code example (reviewer case 2)', () => {
-    // The reviewer's report described "a markdown code fence containing acme/web#1 as an
-    // example" without quoting the exact body, so this reconstructs it. The "epic" word is
-    // placed inside the fence, on the same line as the reference, so this test actually
-    // exercises code-stripping: without it, the epic-marker rule alone would already pass
-    // this line and the old bug would resurface.
+  it('reviewer case 2: a reference inside a fenced example is not a declaration', () => {
     const body = [
       'Reference examples for the epic:',
       '```',
@@ -53,30 +115,31 @@ describe('parseEpicFromBody', () => {
     expect(parseEpicFromBody(body)).toBeNull()
   })
 
-  it('refuses to pick the leftmost of two candidates (reviewer case 3)', () => {
+  it('reviewer case 3: neither of two bare mentions in a sentence is a declaration', () => {
     const body = 'Blocks acme/web#10, part of acme/platform#339.'
     expect(parseEpicFromBody(body)).toBeNull()
   })
 
-  // --- Additional coverage for the controller's specific rulings ---
-
-  it('strips an inline code span before matching', () => {
-    const body = 'Reference example: `acme/web#1` is how you cite the epic.'
+  it('re-reviewer case 4: "epic" co-occurring with a reference is not a declaration', () => {
+    // The exact input that broke round 1's "epic co-occurs with the reference" heuristic:
+    // "epic" is on the line, and the PROSE pattern matched the unrelated ticket reference as
+    // the only (and therefore, after dedupe, the winning) candidate.
+    const body = 'Filed in acme/support (ticket #123) for tracking, unrelated to this epic.'
     expect(parseEpicFromBody(body)).toBeNull()
   })
 
-  it('refuses when two distinct qualified references share an epic-marked line', () => {
-    const body = 'Part of the epic in acme/web#10 or maybe acme/platform#339.'
+  it('round 1 contract, now superseded: a shorthand reference embedded in a sentence no longer counts', () => {
+    // Round 1 accepted this (after co-opting the plan's original 'reads a shorthand
+    // reference' test to add an "epic" marker). Round 2 replaces inference over prose with
+    // an explicit declaration line, so this is no longer a match — see the positive
+    // "Epic:"/"Part of:" declaration tests above for the replacement contract.
+    expect(parseEpicFromBody('Part of the epic, acme/platform#339.')).toBeNull()
+  })
+
+  it('round 1 contract, now superseded: the original prose form no longer counts', () => {
+    // This was the plan's original 'reads a cross-repository epic reference' test.
+    const body = 'Part of the telemetry epic in acme/platform (Epic 4, issue #339).'
     expect(parseEpicFromBody(body)).toBeNull()
-  })
-
-  it('accepts a repeated reference to the same epic (not ambiguous, just duplicated)', () => {
-    const body = 'The epic is acme/platform#339, also tracked as acme/platform#339.'
-    expect(parseEpicFromBody(body)).toEqual({ owner: 'acme', repo: 'platform', number: 339 })
-  })
-
-  it('still refuses a bare #339 even when "epic" is present', () => {
-    expect(parseEpicFromBody('Part of the epic (#339), no repository named.')).toBeNull()
   })
 })
 

@@ -19,21 +19,26 @@ export class NotOnBoardError extends Error {
   }
 }
 
-const QUALIFIED = /\b([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#(\d+)\b/g
-const PROSE = /\bin\s+([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\s*\([^)]*?#(\d+)\)/g
-const EPIC_WORD = /\bepic\b/i
+// A declared body convention (round 2), not inference over free English prose (round 1).
+// Round 1 tested whether the word "epic" co-occurred with a reference on a line; the
+// re-reviewer broke that with a line where "epic" and an unrelated reference legitimately
+// share a sentence. Testing co-occurrence can't be patched incrementally — any co-occurrence
+// test admits some sentence that merely mentions both. So this recognises exactly one shape:
+// the entire trimmed line reads "Epic: owner/repo#N" or "Part of: owner/repo#N"
+// (case-insensitive label), with an optional leading markdown list marker and an optional
+// bold wrapper around the label and/or the whole declaration. Nothing else on the line.
+const DECLARATION =
+  /^(?:[-*+]\s+)?(?:\*\*)?(epic|part of):(?:\*\*)?\s*([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#(\d+)(?:\*\*)?$/i
 
-// An example inside a code block is not a declaration. Strip fenced blocks (which may span
-// several lines) and inline spans before looking for references at all.
-function stripCode(body: string): string {
-  return body.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '')
-}
-
-function referencesOnLine(line: string): WorkItemRef[] {
-  const refs: WorkItemRef[] = []
-  for (const m of line.matchAll(PROSE)) refs.push({ owner: m[1]!, repo: m[2]!, number: Number(m[3]!) })
-  for (const m of line.matchAll(QUALIFIED)) refs.push({ owner: m[1]!, repo: m[2]!, number: Number(m[3]!) })
-  return refs
+// Fenced blocks still matter here: a fenced line carries no backticks of its own, so a code
+// example whose only line reads exactly "Epic: acme/web#1" would otherwise satisfy the
+// format verbatim — an example is not a declaration. Inline spans no longer need stripping:
+// under a whole-line match, a backtick either sits at the very start (blocking the required
+// label whether or not it's stripped, since stripping only ever turns it into nothing) or
+// sits elsewhere (leaving "nothing else on the line" violated either way) — it never changes
+// the outcome, so that stripping step was dropped as redundant.
+function stripFencedCode(body: string): string {
+  return body.replace(/```[\s\S]*?```/g, '')
 }
 
 function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
@@ -42,19 +47,14 @@ function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
   return [...byKey.values()]
 }
 
-// Policy (controller's ruling on Finding 1 — a wrong epic silently reorders the work queue,
-// which is worse than no epic):
-//  1. Code examples don't count — strip fenced blocks and inline spans first.
-//  2. A reference only counts when the word "epic" appears on the same line as it.
-//  3. More than one distinct qualified reference surviving those filters is ambiguous:
-//     refuse to guess and return null rather than picking one (e.g. the leftmost).
 // The native sub-issue parent link (see getItem) always wins over this; this only runs when
-// there is no parent.
+// there is no parent. More than one distinct declaration disagreeing is ambiguous: refuse to
+// guess and return null rather than picking one.
 export function parseEpicFromBody(body: string): WorkItemRef | null {
   const found: WorkItemRef[] = []
-  for (const line of stripCode(body).split(/\r?\n/)) {
-    if (!EPIC_WORD.test(line)) continue
-    found.push(...referencesOnLine(line))
+  for (const rawLine of stripFencedCode(body).split(/\r?\n/)) {
+    const match = DECLARATION.exec(rawLine.trim())
+    if (match) found.push({ owner: match[2]!, repo: match[3]!, number: Number(match[4]!) })
   }
   const distinct = dedupe(found)
   return distinct.length === 1 ? distinct[0]! : null
