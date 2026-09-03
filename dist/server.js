@@ -17311,6 +17311,58 @@ var GitHubBoardProvider = class {
   }
 };
 
+// server/providers/github/aliases.ts
+var AliasConflictError = class extends Error {
+  constructor(alias, first, second) {
+    super(
+      `Both ${first} and ${second} declare the alias "${alias}". An alias is a fact a repository states about itself, so exactly one may claim it. Change one .armature.json.`
+    );
+    this.name = "AliasConflictError";
+  }
+};
+var CONFIG_QUERY = `
+query($owner:String!,$name:String!){
+  repository(owner:$owner,name:$name){
+    object(expression:"HEAD:.armature.json"){ ... on Blob { text } }
+  }
+}`;
+function readSiblingConfigFrom(client) {
+  return async (owner, repo) => {
+    const data = await client.graphql(CONFIG_QUERY, { owner, name: repo });
+    const text = data.repository?.object?.text;
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  };
+}
+async function buildAliasMap(read, repositories) {
+  const map = /* @__PURE__ */ new Map();
+  const claimedBy = /* @__PURE__ */ new Map();
+  for (const full of repositories) {
+    const [owner, repo] = full.split("/");
+    if (!owner || !repo) continue;
+    const config2 = await read(owner, repo);
+    const alias = config2?.alias;
+    if (!alias) continue;
+    const existing = claimedBy.get(alias);
+    if (existing && existing !== full) throw new AliasConflictError(alias, existing, full);
+    claimedBy.set(alias, full);
+    map.set(alias, { owner, repo });
+  }
+  return map;
+}
+var ALIAS_REF = /^([A-Za-z0-9._-]+)#(\d+)$/;
+function resolveAlias(map, token) {
+  const match2 = ALIAS_REF.exec(token.trim());
+  if (!match2) return null;
+  const target = map.get(match2[1]);
+  if (!target) return null;
+  return { owner: target.owner, repo: target.repo, number: Number(match2[2]) };
+}
+
 // server/providers/github/next.ts
 var EPIC_TITLE = /\bEpic\s+(\d+)\b/i;
 function epicOrder(title, number3) {
@@ -17442,7 +17494,33 @@ function presentCreated(created, dryRun) {
   const { ref: _omittedDryRunRef, ...rest } = created;
   return { ...rest, dryRun: true };
 }
+var ALIAS_SHAPE = /^([A-Za-z0-9._-]+)#\d+$/;
+function makeRefResolver(provider, read) {
+  let mapPromise = null;
+  const getMap = () => {
+    mapPromise ??= provider.survey().then((snapshot) => buildAliasMap(read, snapshot.repositories));
+    return mapPromise;
+  };
+  return async (token) => {
+    try {
+      return parseRef(token);
+    } catch (error2) {
+      if (!(error2 instanceof BareRefError)) throw error2;
+      const trimmed = token.trim();
+      const shape = ALIAS_SHAPE.exec(trimmed);
+      if (!shape) throw error2;
+      const map = await getMap();
+      const resolved = resolveAlias(map, trimmed);
+      if (resolved) return resolved;
+      const known = [...map.keys()].sort();
+      throw new Error(
+        `Unknown alias "${shape[1]}" in "${trimmed}". ` + (known.length ? `Known aliases: ${known.join(", ")}.` : "No repository on this board declares an alias.")
+      );
+    }
+  };
+}
 async function dispatch(provider, name, args, options) {
+  const resolveRef = options.resolveRef ?? (async (token) => parseRef(token));
   switch (name) {
     case "board_survey":
       return ok(await provider.survey());
@@ -17451,14 +17529,14 @@ async function dispatch(provider, name, args, options) {
       return ok(
         selectNext(snapshot, {
           repo: args.repo,
-          epic: args.epic ? parseRef(args.epic) : void 0
+          epic: args.epic ? await resolveRef(args.epic) : void 0
         })
       );
     }
     case "item_get":
-      return ok(await provider.getItem(parseRef(args.ref)));
+      return ok(await provider.getItem(await resolveRef(args.ref)));
     case "item_claim": {
-      const ref = parseRef(args.ref);
+      const ref = await resolveRef(args.ref);
       const before = await provider.getItem(ref);
       const after = await provider.claim(ref);
       logMutation(
@@ -17468,7 +17546,7 @@ async function dispatch(provider, name, args, options) {
       return ok(after);
     }
     case "item_status": {
-      const ref = parseRef(args.ref);
+      const ref = await resolveRef(args.ref);
       const before = await provider.getItem(ref);
       const after = await provider.setStatus(ref, args.status);
       logMutation(
@@ -17485,7 +17563,7 @@ async function dispatch(provider, name, args, options) {
         repo: repoName,
         title: args.title,
         body: args.body,
-        parent: args.parent ? parseRef(args.parent) : void 0
+        parent: args.parent ? await resolveRef(args.parent) : void 0
       });
       logMutation(
         {
@@ -17509,6 +17587,7 @@ async function main() {
   const client = new GitHubClient(credential);
   const config2 = await loadResolvedConfig({ env: process.env, client });
   const provider = new GitHubBoardProvider(client, config2.board, DRY_RUN);
+  const refResolver = makeRefResolver(provider, readSiblingConfigFrom(client));
   const server = new Server(
     { name: "armature", version: VERSION },
     { capabilities: { tools: {} } }
@@ -17516,7 +17595,7 @@ async function main() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = request.params.arguments ?? {};
-    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN });
+    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef: refResolver });
   });
   await server.connect(new StdioServerTransport());
 }
@@ -17529,5 +17608,6 @@ if (isEntryPoint) {
   });
 }
 export {
-  dispatch
+  dispatch,
+  makeRefResolver
 };

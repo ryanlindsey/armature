@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatch } from '../server/index.js'
+import { dispatch, makeRefResolver } from '../server/index.js'
+import { AliasConflictError } from '../server/providers/github/aliases.js'
+import type { SiblingConfigReader } from '../server/providers/github/aliases.js'
 import type { BoardProvider, BoardSnapshot } from '../server/providers/types.js'
+import { BareRefError, parseRef } from '../server/ref.js'
 
 const snapshot: BoardSnapshot = {
   id: 'PVT_1',
@@ -179,5 +182,148 @@ describe('dispatch: writes log the before/after status transition', () => {
     expect(setStatus).toHaveBeenCalledWith({ owner: 'acme', repo: 'web', number: 5 }, 'Done')
     const entry = JSON.parse(lines[0]!)
     expect(entry).toMatchObject({ ref: 'acme/web#5', field: 'Status', before: 'Todo', after: 'Done' })
+  })
+})
+
+describe('makeRefResolver', () => {
+  const snapshotWithSiblings: BoardSnapshot = {
+    ...snapshot,
+    repositories: ['acme/web', 'acme/site.example'],
+  }
+
+  function siblingReader(configs: Record<string, { alias?: string } | null>): SiblingConfigReader {
+    return async (owner, repo) => configs[`${owner}/${repo}`] ?? null
+  }
+
+  it('resolves an already-qualified ref without reading any sibling config', async () => {
+    const read = vi.fn().mockResolvedValue(null)
+    const provider = makeProvider()
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('acme/web#5')).resolves.toEqual({ owner: 'acme', repo: 'web', number: 5 })
+    expect(read).not.toHaveBeenCalled()
+    expect(provider.survey).not.toHaveBeenCalled()
+  })
+
+  it("expands a known alias by building the map from the board's repositories", async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    const read = vi.fn(
+      siblingReader({ 'acme/site.example': { alias: 'apex' }, 'acme/web': null }),
+    )
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('apex#272')).resolves.toEqual({
+      owner: 'acme',
+      repo: 'site.example',
+      number: 272,
+    })
+  })
+
+  it('builds the alias map at most once, on first use, and never for a qualified ref', async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    const read = vi.fn(siblingReader({ 'acme/site.example': { alias: 'apex' } }))
+    const resolveRef = makeRefResolver(provider, read)
+
+    await resolveRef('apex#272')
+    await resolveRef('apex#900')
+    await resolveRef('acme/web#1')
+
+    expect(provider.survey).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledTimes(2) // once per repository on the board, not per call
+  })
+
+  it('never builds the map for a bare number, and still refuses it', async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    const read = vi.fn().mockResolvedValue(null)
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('278')).rejects.toThrow(BareRefError)
+    await expect(resolveRef('#278')).rejects.toThrow(BareRefError)
+    expect(provider.survey).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('fails loud, naming the known aliases, when the alias is unrecognised', async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    const read = vi.fn(
+      siblingReader({ 'acme/site.example': { alias: 'apex' }, 'acme/web': { alias: 'engine' } }),
+    )
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('racing#293')).rejects.toThrow(/racing/)
+    await expect(resolveRef('racing#293')).rejects.toThrow(/apex/)
+    await expect(resolveRef('racing#293')).rejects.toThrow(/engine/)
+  })
+
+  it('says plainly that no repository declares an alias when the map is empty', async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    const read = vi.fn().mockResolvedValue(null)
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('racing#293')).rejects.toThrow(/no repository/i)
+  })
+
+  it('propagates a conflicting alias declaration as AliasConflictError', async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    const read = vi.fn(
+      siblingReader({ 'acme/site.example': { alias: 'apex' }, 'acme/web': { alias: 'apex' } }),
+    )
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('apex#272')).rejects.toThrow(AliasConflictError)
+  })
+})
+
+describe('dispatch: ref resolution', () => {
+  it('uses parseRef alone when no resolver is supplied, so an alias token is still refused', async () => {
+    const provider = makeProvider()
+    await expect(
+      dispatch(provider, 'item_get', { ref: 'apex#272' }, { dryRun: false }),
+    ).rejects.toThrow(BareRefError)
+  })
+
+  it('retries item_get through the injected resolver', async () => {
+    const resolveRef = vi.fn(async (token: string) =>
+      token === 'apex#272' ? { owner: 'acme', repo: 'site.example', number: 272 } : parseRef(token),
+    )
+    const getItem = vi.fn().mockResolvedValue({
+      ref: { owner: 'acme', repo: 'site.example', number: 272 },
+      status: 'Todo',
+    })
+    const provider = makeProvider({ getItem })
+
+    await dispatch(provider, 'item_get', { ref: 'apex#272' }, { dryRun: false, resolveRef })
+
+    expect(getItem).toHaveBeenCalledWith({ owner: 'acme', repo: 'site.example', number: 272 })
+  })
+
+  it("resolves board_next's epic through the injected resolver", async () => {
+    const resolveRef = vi.fn().mockResolvedValue({ owner: 'acme', repo: 'site.example', number: 9 })
+    const provider = makeProvider()
+
+    await dispatch(provider, 'board_next', { epic: 'apex#9' }, { dryRun: false, resolveRef })
+
+    expect(resolveRef).toHaveBeenCalledWith('apex#9')
+  })
+
+  it("resolves item_create's parent through the injected resolver", async () => {
+    const resolveRef = vi.fn().mockResolvedValue({ owner: 'acme', repo: 'site.example', number: 9 })
+    const create = vi.fn().mockResolvedValue({
+      ref: { owner: 'acme', repo: 'web', number: 42 },
+      id: 'I_1', title: 't', body: 'b', state: 'OPEN',
+      status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null,
+    })
+    const provider = makeProvider({ create })
+
+    await dispatch(
+      provider,
+      'item_create',
+      { repo: 'acme/web', title: 't', body: 'b', parent: 'apex#9' },
+      { dryRun: false, resolveRef },
+    )
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ parent: { owner: 'acme', repo: 'site.example', number: 9 } }),
+    )
   })
 })

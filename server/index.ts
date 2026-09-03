@@ -5,9 +5,12 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { readCliTokenFromGh, resolveCredential } from './auth.js'
 import { loadResolvedConfig } from './config-io.js'
 import { logMutation } from './log.js'
-import { formatRef, parseRef } from './ref.js'
+import { BareRefError, formatRef, parseRef } from './ref.js'
+import type { WorkItemRef } from './ref.js'
 import { GitHubClient } from './providers/github/client.js'
 import { GitHubBoardProvider } from './providers/github/provider.js'
+import { buildAliasMap, readSiblingConfigFrom, resolveAlias } from './providers/github/aliases.js'
+import type { AliasMap, SiblingConfigReader } from './providers/github/aliases.js'
 import { selectNext } from './providers/github/next.js'
 import type { BoardProvider } from './providers/types.js'
 import { VERSION } from './version.js'
@@ -97,10 +100,63 @@ function presentCreated<T extends { ref: unknown }>(created: T, dryRun: boolean)
   return { ...rest, dryRun: true }
 }
 
+export type RefResolver = (token: string) => Promise<WorkItemRef>
+
+// Matches the shape resolveAlias expects — a single alias token, no slash, before "#number" —
+// without needing the alias map built yet. That lets a genuine bare number ("278" or "#278")
+// keep raising BareRefError immediately: it can never resolve, aliased or not, so there is no
+// reason to pay for a map build just to refuse it the same way parseRef already does.
+const ALIAS_SHAPE = /^([A-Za-z0-9._-]+)#\d+$/
+
+// Wraps parseRef with a fallback through the alias map: a token parseRef rejects as unqualified
+// is retried as "alias#number" before the error surfaces. Building the map costs one sibling
+// .armature.json read per repository on the board (see aliases.ts), so it must not happen at
+// startup or on every call — `mapPromise` builds it at most once, the first time an alias-shaped
+// token actually appears, and every later lookup (hit or miss) reuses that same cached promise.
+// main() constructs exactly one resolver and closes over it for the life of the process.
+export function makeRefResolver(provider: BoardProvider, read: SiblingConfigReader): RefResolver {
+  let mapPromise: Promise<AliasMap> | null = null
+  const getMap = (): Promise<AliasMap> => {
+    mapPromise ??= provider.survey().then((snapshot) => buildAliasMap(read, snapshot.repositories))
+    return mapPromise
+  }
+
+  return async (token: string): Promise<WorkItemRef> => {
+    try {
+      return parseRef(token)
+    } catch (error) {
+      if (!(error instanceof BareRefError)) throw error
+
+      const trimmed = token.trim()
+      const shape = ALIAS_SHAPE.exec(trimmed)
+      if (!shape) throw error // a bare number, or otherwise not alias-shaped: refuse as before
+
+      const map = await getMap()
+      const resolved = resolveAlias(map, trimmed)
+      if (resolved) return resolved
+
+      const known = [...map.keys()].sort()
+      throw new Error(
+        `Unknown alias "${shape[1]}" in "${trimmed}". ` +
+          (known.length
+            ? `Known aliases: ${known.join(', ')}.`
+            : 'No repository on this board declares an alias.'),
+      )
+    }
+  }
+}
+
 export type DispatchOptions = {
   dryRun: boolean
   /** Where mutation log lines go. Defaults to logMutation's own stderr writer. */
   logWrite?: (line: string) => void
+  /**
+   * Resolves a `ref` / `epic` / `parent` token to a WorkItemRef. Defaults to parseRef alone, so
+   * dispatch stays testable without a real GitHubClient or board survey. main() overrides this
+   * with a `makeRefResolver` instance that also retries an unqualified token through the alias
+   * map before giving up.
+   */
+  resolveRef?: RefResolver
 }
 
 // The pure request-handling core, factored out of main() so it can run against any
@@ -112,6 +168,8 @@ export async function dispatch(
   args: Record<string, string>,
   options: DispatchOptions,
 ): Promise<{ content: { type: 'text'; text: string }[] }> {
+  const resolveRef: RefResolver = options.resolveRef ?? (async (token) => parseRef(token))
+
   switch (name) {
     case 'board_survey':
       return ok(await provider.survey())
@@ -121,16 +179,16 @@ export async function dispatch(
       return ok(
         selectNext(snapshot, {
           repo: args.repo,
-          epic: args.epic ? parseRef(args.epic) : undefined,
+          epic: args.epic ? await resolveRef(args.epic) : undefined,
         }),
       )
     }
 
     case 'item_get':
-      return ok(await provider.getItem(parseRef(args.ref!)))
+      return ok(await provider.getItem(await resolveRef(args.ref!)))
 
     case 'item_claim': {
-      const ref = parseRef(args.ref!)
+      const ref = await resolveRef(args.ref!)
       const before = await provider.getItem(ref)
       const after = await provider.claim(ref)
       logMutation(
@@ -141,7 +199,7 @@ export async function dispatch(
     }
 
     case 'item_status': {
-      const ref = parseRef(args.ref!)
+      const ref = await resolveRef(args.ref!)
       const before = await provider.getItem(ref)
       const after = await provider.setStatus(ref, args.status!)
       logMutation(
@@ -159,7 +217,7 @@ export async function dispatch(
         repo: repoName,
         title: args.title!,
         body: args.body!,
-        parent: args.parent ? parseRef(args.parent) : undefined,
+        parent: args.parent ? await resolveRef(args.parent) : undefined,
       })
       logMutation(
         {
@@ -190,6 +248,11 @@ async function main(): Promise<void> {
   // board on every single tool invocation and throw the cache away each time.
   const provider = new GitHubBoardProvider(client, config.board, DRY_RUN)
 
+  // Built once and closed over for the same reason: makeRefResolver caches the alias map
+  // internally after its first build, and a fresh resolver per call would throw that cache away
+  // and re-read every sibling's .armature.json on every tool invocation.
+  const refResolver = makeRefResolver(provider, readSiblingConfigFrom(client))
+
   const server = new Server(
     { name: 'armature', version: VERSION },
     { capabilities: { tools: {} } },
@@ -199,7 +262,7 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = (request.params.arguments ?? {}) as Record<string, string>
-    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN })
+    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef: refResolver })
   })
 
   await server.connect(new StdioServerTransport())
