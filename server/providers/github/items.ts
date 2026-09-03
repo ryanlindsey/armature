@@ -89,9 +89,28 @@ function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
   return [...byKey.values()]
 }
 
-// The native sub-issue parent link (see getItem) always wins over this; this only runs when
-// there is no parent. More than one distinct declaration disagreeing is ambiguous: refuse to
-// guess and return null rather than picking one.
+// SPEC FALLBACK — NOT WIRED INTO getItem IN v1.
+//
+// This implements the spec's "optional declared pattern": a body-convention fallback for
+// locating an item's epic when there is no native sub-issue parent link. It is deliberately
+// not called from getItem below. The spec describes this fallback as opt-in, and v1 has no
+// configuration plumbing to gate it behind — that arrives with config-io.ts in Task 12.
+// Shipping it always-on was tried and rejected: three rounds of review each narrowed a
+// different hole in what turned out to be an unbounded "distinguish decorative content from
+// prose" problem, and a fourth review found two more still open, which whoever wires this up
+// behind the config gate must close first:
+//   - indentation that only reaches 4+ columns after CommonMark's tab-stop expansion (e.g. a
+//     line starting with two spaces then a tab) is not recognised as indented code — the
+//     current check is the literal `/^( {4,}|\t)/` in stripCodeBlocks, not a tab-stop-aware
+//     column count.
+//   - HTML blocks (e.g. `<pre>Epic: acme/web#1</pre>`) are not stripped at all; only the three
+//     Markdown code-block syntaxes (fenced by backticks, fenced by tildes, indented) are.
+// Until that gate exists, do not call this from getItem or any other live read path.
+//
+// The grammar itself is sound and fully reviewed: the entire trimmed line must read
+// "Epic: owner/repo#N" or "Part of: owner/repo#N" (see DECLARATION above), and more than one
+// distinct declaration disagreeing is ambiguous — refuse to guess and return null rather than
+// picking one.
 export function parseEpicFromBody(body: string): WorkItemRef | null {
   const found: WorkItemRef[] = []
   for (const rawLine of stripCodeBlocks(body).split('\n')) {
@@ -170,6 +189,8 @@ export async function getItem(
     status: projectItem?.fieldValueByName?.name ?? null,
     projectItemId: projectItem?.id ?? null,
     parent: epicFromLink,
-    epic: epicFromLink ?? parseEpicFromBody(issue.body ?? ''),
+    // Parent link only — see the comment above parseEpicFromBody for why the body fallback
+    // is not called here in v1.
+    epic: epicFromLink,
   }
 }

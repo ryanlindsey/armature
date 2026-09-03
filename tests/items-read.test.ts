@@ -287,3 +287,65 @@ describe('getItem project membership pagination', () => {
     expect(detail.status).toBe('Todo')
   })
 })
+
+describe('getItem epic derivation', () => {
+  // Round 4: the body-fallback (parseEpicFromBody) is a real, reviewed implementation of the
+  // spec's optional declared pattern, but v1 ships with no configuration to gate it behind
+  // (that arrives with config-io.ts in Task 12). getItem derives `epic` from the native
+  // sub-issue parent link only. This is the new contract, and it deserves its own test: a
+  // body containing an otherwise-valid declaration line must NOT produce an epic when there
+  // is no parent link.
+  const credential = { token: 'secret-value', source: 'gh-cli' as const }
+  const board = { provider: 'github' as const, owner: 'acme', number: 1 }
+  const ref = { owner: 'acme', repo: 'web', number: 278 }
+
+  function issueResponse(opts: { body: string; parent: unknown }) {
+    return {
+      data: {
+        repository: {
+          issue: {
+            id: 'I_1',
+            number: 278,
+            title: 't',
+            body: opts.body,
+            state: 'OPEN',
+            parent: opts.parent,
+            projectItems: { nodes: [], pageInfo: { hasNextPage: false } },
+          },
+        },
+      },
+    }
+  }
+
+  function clientReturning(response: unknown) {
+    return new GitHubClient(credential, async () =>
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+  }
+
+  it('does not derive an epic from the body when there is no parent link', async () => {
+    const client = clientReturning(
+      issueResponse({ body: 'Epic: acme/platform#339', parent: null }),
+    )
+
+    const detail = await getItem(client, board, ref)
+
+    expect(detail.epic).toBeNull()
+  })
+
+  it('derives the epic from the native parent link when present', async () => {
+    const client = clientReturning(
+      issueResponse({
+        body: 'No declaration here.',
+        parent: { number: 339, repository: { owner: { login: 'acme' }, name: 'platform' } },
+      }),
+    )
+
+    const detail = await getItem(client, board, ref)
+
+    expect(detail.epic).toEqual({ owner: 'acme', repo: 'platform', number: 339 })
+  })
+})
