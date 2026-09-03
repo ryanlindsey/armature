@@ -44,7 +44,7 @@ export function describeBoardProvider(
         numberToRepos.get(item.ref.number)!.add(repoId)
       }
 
-      // For each number claimed by multiple repos, verify it's in collisions with exact set
+      // Forward direction: every number claimed by multiple repos must be in collisions with exact set
       for (const [number, repos] of numberToRepos) {
         if (repos.size > 1) {
           // This number is claimed by multiple repositories; must appear in collisions
@@ -53,6 +53,15 @@ export function describeBoardProvider(
           const actualRepos = snapshot.collisions[number]!.sort()
           expect(actualRepos).toEqual(expectedRepos)
         }
+      }
+
+      // Reverse direction: every entry in collisions must correspond to a number that genuinely
+      // appears in multiple repos with that exact repo set (no phantom entries)
+      for (const [number, repos] of Object.entries(snapshot.collisions)) {
+        const num = Number(number)
+        expect(numberToRepos.has(num)).toBe(true)
+        const actualRepos = Array.from(numberToRepos.get(num)!).sort()
+        expect(actualRepos).toEqual(repos.sort())
       }
     })
 
