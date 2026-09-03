@@ -97,6 +97,61 @@ describe('parseEpicFromBody', () => {
     expect(parseEpicFromBody('`Epic: acme/web#1`')).toBeNull()
   })
 
+  it('returns null for a declaration missing both owner and repo', () => {
+    // The DECLARATION grammar already refuses this (there's no "/" for the owner/repo
+    // groups to match against), but nothing asserted it before round 3.
+    expect(parseEpicFromBody('Epic: #339')).toBeNull()
+  })
+
+  // --- Round 3: CommonMark's code-block syntaxes are a closed, enumerable set. Round 2 only
+  // stripped triple-backtick fences; the re-reviewer reproduced the same silent wrong-epic
+  // attachment through the two syntaxes it missed. ---
+
+  it('does not parse a declaration out of a tilde-fenced example', () => {
+    const body = ['Convention example:', '~~~', 'Epic: acme/web#1', '~~~'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('does not parse a declaration out of a 4-space-indented code block', () => {
+    // Indentation must be checked before trimming — trim() erases it, which is exactly how
+    // this slipped through round 2.
+    const body = ['Convention example:', '', '    Epic: acme/web#1'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('does not parse a declaration out of a tab-indented code block', () => {
+    const body = ['Convention example:', '', '\tEpic: acme/web#1'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('strips an unterminated triple-backtick fence to the end of the body', () => {
+    // A false negative here costs nothing (the parent link is unaffected and the fallback
+    // simply declines); an unclosed fence whose remainder is treated as prose risks a silent
+    // wrong-epic attachment, so everything after an unclosed fence must be dropped. This is a
+    // single, otherwise-unambiguous declaration deliberately — with a second declaration also
+    // present the "two distinct references" ambiguity rule would return null anyway and mask
+    // whether stripping actually happened.
+    const body = ['```', 'Epic: acme/web#1', 'more notes'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('strips an unterminated tilde fence to the end of the body', () => {
+    const body = ['~~~', 'Epic: acme/web#1', 'more notes'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
+  it('keeps accepting plain, list-marker, and bold declaration lines after the broader stripping', () => {
+    expect(parseEpicFromBody('Epic: acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+    expect(parseEpicFromBody('- Epic: acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+    expect(parseEpicFromBody('**Epic:** acme/platform#339')).toEqual({
+      owner: 'acme', repo: 'platform', number: 339,
+    })
+  })
+
   // --- Regression suite: every input previously shown to produce a wrong, silent epic ---
 
   it('reviewer case 1: an unrelated parenthetical is not a declaration', () => {

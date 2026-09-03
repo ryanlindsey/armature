@@ -30,15 +30,57 @@ export class NotOnBoardError extends Error {
 const DECLARATION =
   /^(?:[-*+]\s+)?(?:\*\*)?(epic|part of):(?:\*\*)?\s*([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#(\d+)(?:\*\*)?$/i
 
-// Fenced blocks still matter here: a fenced line carries no backticks of its own, so a code
-// example whose only line reads exactly "Epic: acme/web#1" would otherwise satisfy the
-// format verbatim — an example is not a declaration. Inline spans no longer need stripping:
-// under a whole-line match, a backtick either sits at the very start (blocking the required
-// label whether or not it's stripped, since stripping only ever turns it into nothing) or
-// sits elsewhere (leaving "nothing else on the line" violated either way) — it never changes
-// the outcome, so that stripping step was dropped as redundant.
-function stripFencedCode(body: string): string {
-  return body.replace(/```[\s\S]*?```/g, '')
+// CommonMark's code-block syntaxes are a closed, enumerable set: triple-backtick fences,
+// tilde (~~~) fences, and indented code blocks (4+ leading spaces, or a leading tab). Round 2
+// stripped only the first; the re-reviewer reproduced the same silent wrong-epic attachment
+// through the other two ("a fenced line carries no backticks of its own" applies just as
+// much to a tilde fence, and .trim()-ing a line before checking indentation erases the very
+// signal that marks it as code). All three are stripped before matching — an example in any
+// of them is not a declaration.
+//
+// An unterminated fence (backtick or tilde) strips to the end of the body. The asymmetry is
+// deliberate: a false negative here costs nothing — the native parent link is unaffected and
+// the body fallback simply declines — while treating an unclosed fence's remainder as prose
+// risks a silent wrong-epic attachment.
+//
+// Inline spans (single backticks) still don't need stripping: under a whole-line match, a
+// backtick either sits at the very start (blocking the required label whether or not it's
+// stripped, since stripping only ever turns it into nothing) or sits elsewhere (leaving
+// "nothing else on the line" violated either way) — it never changes the outcome.
+//
+// LIMITATION: the indented-code check is a conservative per-line approximation, not full
+// CommonMark. A real indented code block is a property of block *context* — for example, a
+// line indented 4+ spaces inside a list item is ordinarily list-item content, not code,
+// relative to the list marker's own indentation — and correctly telling those apart requires
+// tracking container structure (list items, blockquotes) across lines, which this does not
+// do. Any line starting with 4+ spaces or a tab is treated as code unconditionally,
+// regardless of surrounding structure. Given the stated asymmetry (a false negative is free;
+// a false positive is a silent wrong epic), stripping a superset of true indented code blocks
+// is the safe direction, but it is an approximation, not a claim of full compliance.
+function stripCodeBlocks(body: string): string {
+  const kept: string[] = []
+  let fence: { char: '`' | '~'; len: number } | null = null
+
+  for (const rawLine of body.split(/\r?\n/)) {
+    if (fence) {
+      const closed = new RegExp(`^\\${fence.char}{${fence.len},}$`).test(rawLine.trim())
+      if (closed) fence = null
+      continue // fence content (and the closing delimiter itself) is never a declaration line
+    }
+
+    const open = /^(`{3,}|~{3,})/.exec(rawLine.trimStart())
+    if (open) {
+      const marker = open[1]!
+      fence = { char: marker[0] as '`' | '~', len: marker.length }
+      continue
+    }
+
+    if (/^( {4,}|\t)/.test(rawLine)) continue // indented code — checked before any trimming
+
+    kept.push(rawLine)
+  }
+
+  return kept.join('\n')
 }
 
 function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
@@ -52,7 +94,7 @@ function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
 // guess and return null rather than picking one.
 export function parseEpicFromBody(body: string): WorkItemRef | null {
   const found: WorkItemRef[] = []
-  for (const rawLine of stripFencedCode(body).split(/\r?\n/)) {
+  for (const rawLine of stripCodeBlocks(body).split('\n')) {
     const match = DECLARATION.exec(rawLine.trim())
     if (match) found.push({ owner: match[2]!, repo: match[3]!, number: Number(match[4]!) })
   }
