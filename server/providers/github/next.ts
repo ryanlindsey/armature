@@ -26,8 +26,9 @@ export function selectNext(
   const isEpic = (i: BoardItem) => parents.has(key(i.ref))
 
   const children = snapshot.items.filter((i) => !isEpic(i))
-  const inRepo = options.repo
-    ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === options.repo.toLowerCase())
+  const repoLower = options.repo?.toLowerCase()
+  const inRepo = repoLower
+    ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower)
     : children
   const underEpic = options.epic
     ? inRepo.filter((i) => i.parent && key(i.parent) === key(options.epic!))
