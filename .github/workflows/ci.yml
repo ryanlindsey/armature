@@ -18,12 +18,19 @@ jobs:
           git diff --exit-code dist/server.js
   integration:
     runs-on: ubuntu-latest
-    # Runs only on push, and only when the scratch-board variables are configured. Without this
+    # Runs only on push, and only when every scratch-board variable is configured. Without that
     # second condition an unconfigured repo's job would still run, hit the in-suite
     # describe.skipIf guard, execute zero tests, and report green — a passing signal that means
     # nothing. Skipping the job outright instead makes that state visible in the Actions UI
     # rather than indistinguishable from a real pass.
-    if: github.event_name == 'push' && vars.ARMATURE_IT_OWNER != '' && vars.ARMATURE_IT_BOARD != ''
+    #
+    # ARMATURE_IT_REPO belongs in the condition for a different reason than the other two: it is
+    # the only one whose absence used to be survivable. queries.integration.test.ts fell back to
+    # the owner as the repository name, so an unset variable queried `<owner>/<owner>` and failed
+    # on a repository nobody had ever named. It is required now rather than defaulted.
+    if: >-
+      github.event_name == 'push' && vars.ARMATURE_IT_OWNER != '' &&
+      vars.ARMATURE_IT_BOARD != '' && vars.ARMATURE_IT_REPO != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,4 +41,5 @@ jobs:
           ARMATURE_INTEGRATION: '1'
           ARMATURE_IT_OWNER: ${{ vars.ARMATURE_IT_OWNER }}
           ARMATURE_IT_BOARD: ${{ vars.ARMATURE_IT_BOARD }}
+          ARMATURE_IT_REPO: ${{ vars.ARMATURE_IT_REPO }}
           GITHUB_TOKEN: ${{ secrets.ARMATURE_IT_TOKEN }}

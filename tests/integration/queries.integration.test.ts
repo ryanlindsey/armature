@@ -18,7 +18,11 @@ const owner = process.env.ARMATURE_IT_OWNER
 const repo = process.env.ARMATURE_IT_REPO
 const number = Number(process.env.ARMATURE_IT_BOARD ?? '0')
 
-describe.skipIf(!enabled || !owner || !number)('queries GitHub actually accepts', () => {
+// `repo` joins the skip guard rather than defaulting to `owner`. The fallback made an unset
+// variable indistinguishable from a configured one, and sent `<owner>/<owner>` to the API — a
+// repository nobody had named, failing on a message that pointed at the board rather than at the
+// missing variable. Unconfigured now skips, in the same shape as the other three.
+describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually accepts', () => {
   async function client() {
     const credential = await resolveCredential({ readCliToken: readCliTokenFromGh, env: process.env })
     return new GitHubClient(credential)
@@ -27,7 +31,7 @@ describe.skipIf(!enabled || !owner || !number)('queries GitHub actually accepts'
   it('accepts REPO_BOARDS_QUERY against the live schema', async () => {
     const data = await (await client()).graphql<any>(REPO_BOARDS_QUERY, {
       owner: owner!,
-      name: repo ?? owner!,
+      name: repo!,
     })
     expect(data).toHaveProperty('repository')
   })

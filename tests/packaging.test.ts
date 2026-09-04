@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { VERSION } from '../server/version.js'
 
@@ -148,6 +148,45 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
   // longer holds.
   it('serves a check CI still makes', () => {
     expect(readText('.github/workflows/ci.yml')).toContain('git diff --exit-code dist/server.js')
+  })
+})
+
+// The integration job runs a suite whose configuration lives entirely in the job's env block, so
+// the two drift silently: the suite reads a variable, the workflow never passes it, and every
+// test still runs — against whatever the missing value defaulted to. That is not hypothetical.
+// ARMATURE_IT_REPO was read by queries.integration.test.ts and never passed, and the fallback
+// sent `<owner>/<owner>` to the API for as long as the job was enabled.
+describe('the integration job stays in step with the suite it runs', () => {
+  const ci = readText('.github/workflows/ci.yml')
+
+  // Derived from the suite's own source rather than listed here. A hard-coded list would need
+  // updating by the same person who forgot the env block, which is the failure being guarded.
+  const readByTheSuite = () => {
+    const dir = new URL('../tests/integration/', import.meta.url)
+    const names = new Set<string>()
+    for (const file of readdirSync(dir)) {
+      const src = readFileSync(new URL(file, dir), 'utf8')
+      for (const m of src.matchAll(/process\.env\.(ARMATURE_[A-Z_]+)/g)) names.add(m[1]!)
+    }
+    return names
+  }
+
+  it('passes the suite every variable it reads', () => {
+    const names = readByTheSuite()
+    expect(names.size, 'no ARMATURE_* reads found — the scan is broken, not the workflow')
+      .toBeGreaterThan(0)
+    for (const name of names) expect(ci, `ci.yml must pass ${name}`).toContain(`${name}:`)
+  })
+
+  // The other half of the same drift. A variable passed but left out of the guard lets the job
+  // run half-configured, which is how it fails on a real board rather than skipping — the exact
+  // state the guard's own comment says it exists to prevent.
+  it('gates the job on every board variable it passes', () => {
+    const used = new Set([...ci.matchAll(/vars\.(ARMATURE_IT_[A-Z_]+)/g)].map((m) => m[1]!))
+    expect(used.size).toBeGreaterThan(0)
+    for (const name of used) {
+      expect(ci, `the guard must require ${name}`).toContain(`vars.${name} != ''`)
+    }
   })
 })
 
