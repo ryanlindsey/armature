@@ -1,13 +1,21 @@
 {
   "name": "armature",
-  "owner": { "name": "Ryan Lindsey" },
-  "metadata": { "description": "Cross-repository epic and ticket orchestration", "version": "0.1.0" },
+  "owner": {
+    "name": "Ryan Lindsey"
+  },
+  "metadata": {
+    "description": "Cross-repository epic and ticket orchestration",
+    "version": "0.2.0"
+  },
   "plugins": [
     {
       "name": "armature",
-      "source": { "source": "url", "url": "https://github.com/ryanlindsey/armature.git" },
+      "source": {
+        "source": "url",
+        "url": "https://github.com/ryanlindsey/armature.git"
+      },
       "description": "Drive epics and tickets across many repositories from one project board.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "strict": true
     }
   ]
