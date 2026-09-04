@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/ryanlindsey/armature/compare/armature-v0.3.1...armature-v0.3.2) (2026-09-04)
+
+
+### Documentation
+
+* add AGENTS.md agent guidance and ignore local Claude worktrees ([#21](https://github.com/ryanlindsey/armature/issues/21)) ([ccb3934](https://github.com/ryanlindsey/armature/commit/ccb393439f461440e6df99a18ddf762211d9a2a2))
+
 ## [0.3.1](https://github.com/ryanlindsey/armature/compare/armature-v0.3.0...armature-v0.3.1) (2026-09-04)
 
 
