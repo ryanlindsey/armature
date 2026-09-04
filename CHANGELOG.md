@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/ryanlindsey/armature/compare/armature-v0.3.2...armature-v0.3.3) (2026-09-04)
+
+
+### Documentation
+
+* reframe the description around the agentic engineering loop ([#23](https://github.com/ryanlindsey/armature/issues/23)) ([6a7227b](https://github.com/ryanlindsey/armature/commit/6a7227b3c96b01b8b7489cc9accbb5ec2f15d949))
+
 ## [0.3.2](https://github.com/ryanlindsey/armature/compare/armature-v0.3.1...armature-v0.3.2) (2026-09-04)
 
 
