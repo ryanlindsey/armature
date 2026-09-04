@@ -76,11 +76,13 @@ a stderr the MCP client discards. Never hoist config resolution back above `serv
 
 - **`dist/server.js` is committed.** CI runs `npm run build` and `git diff --exit-code dist/server.js`.
   Run `npm run build` and commit the bundle in the same change as any `server/**` edit.
-- **The version lives in five places** (`package.json`, `.claude-plugin/plugin.json`,
-  `.claude-plugin/marketplace.json` ×2, `server/version.ts`) and `tests/packaging.test.ts` pins them
-  equal. release-please bumps all five via `extra-files`; `release.yml`'s `bundle` job then rebuilds
-  `dist/server.js` on the release branch, because esbuild inlines `VERSION` and strips the
-  `x-release-please-version` marker. Don't hand-edit versions.
+- **The version lives in six places** (`package.json`, `.claude-plugin/plugin.json`,
+  `.claude-plugin/marketplace.json` ×2, `server/version.ts`, `dist/server.js`) and
+  `tests/packaging.test.ts` pins them equal. release-please bumps all six via `extra-files`.
+  The bundle is in that list only because `esbuild.config.mjs` re-attaches the
+  `x-release-please-version` marker after building — esbuild inlines `VERSION` as a bare literal and
+  drops the comment, and without the marker release-please skips the file in silence. The build
+  asserts the anchor matches exactly one line rather than trusting it. Don't hand-edit versions.
 - **`tests/packaging.test.ts` asserts on prose.** It reads `README.md`, `skills/working-the-board/SKILL.md`,
   `commands/*.md` frontmatter, and both workflow files — section ordering, the Superpowers step
   numbering shared between README and SKILL, `allowed-tools` covering the tools each command calls.
