@@ -37,6 +37,13 @@ export type ResolveInput = {
   userConfig: RepoConfig
   env: Record<string, string | undefined>
   boardsContainingRepo: BoardRef[]
+  /**
+   * Why `boardsContainingRepo` is empty, when the lookup failed rather than found nothing.
+   * Carried for the same reason as `originProblem`: it only matters on the path that needed an
+   * answer, and on that path it is the difference between a board that was never configured and
+   * a query that never worked.
+   */
+  boardsProblem?: string
 }
 
 export class ConfigError extends Error {
@@ -111,7 +118,10 @@ export function resolveConfig(input: ResolveInput): ResolvedConfig {
         `or set ARMATURE_BOARD to "github:owner/number".` +
         // Only now does the missing origin matter: without it there was no repository to ask
         // which boards contain it, which is why nothing could be derived.
-        (input.originProblem ? ` ${input.originProblem}` : ''),
+        (input.originProblem ? ` ${input.originProblem}` : '') +
+        // Likewise the lookup's own failure: nothing was derived because nothing answered, and
+        // saying so is what turns a wrong sentence about the user's setup into a real lead.
+        (input.boardsProblem ? ` ${input.boardsProblem}` : ''),
     )
   } else {
     const names = input.boardsContainingRepo.map((b) => `${b.owner}/${b.number}`).join(', ')

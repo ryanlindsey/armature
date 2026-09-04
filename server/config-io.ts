@@ -67,11 +67,23 @@ export async function readOriginUrl(cwd = process.cwd()): Promise<string> {
 // this is what keeps the spec's zero-config path at a single request. It reports the boards
 // linked to the repository so resolveConfig can derive one when exactly one is found, and
 // name the candidates when several are.
-const REPO_BOARDS_QUERY = `
+// `owner` here is a ProjectV2Owner, an interface that declares no `login` of its own — only the
+// User and Organization that implement it do. Selecting `owner{ login }` directly, as this query
+// did through v0.2.0, made the whole document invalid: GitHub answered every call with
+// `undefinedField`, boardsContainingRepo swallowed it, and resolveConfig reported "No board
+// found" in every repository on earth. Exported so a live-schema test can send the real document
+// to the real schema; a fake client accepts anything, which is how this shipped.
+export const REPO_BOARDS_QUERY = `
 query($owner:String!,$name:String!){
   repository(owner:$owner,name:$name){
     projectsV2(first:100){
-      nodes{ number owner{ login } }
+      nodes{
+        number
+        owner{
+          ... on User { login }
+          ... on Organization { login }
+        }
+      }
     }
   }
 }`
@@ -81,24 +93,44 @@ type RepoBoardsResponse = {
 }
 
 /**
- * The boards linked to a repository, via `repository.projectsV2`. Never throws: with no
- * client (no credential resolved yet) or a failed query, it reports no candidates and lets
- * `resolveConfig` produce its explicit "no board found" error naming the fix.
+ * What asking GitHub which boards contain a repository produced.
+ *
+ * `problem` separates "the repository is on no board" from "armature never got an answer". They
+ * were indistinguishable before — both arrived as an empty list — which is how a query GitHub
+ * rejected outright presented for a whole release as ordinary missing configuration.
+ */
+export type BoardCandidates = { boards: BoardRef[]; problem?: string }
+
+/**
+ * The boards linked to a repository, via `repository.projectsV2`. Never throws: with no client
+ * (no credential resolved yet) it reports no candidates, and a failed query is reported as a
+ * `problem` for `resolveConfig` to attach to its "no board found" error rather than hide.
  */
 export async function boardsContainingRepo(
   client: GitHubClient | undefined,
   repo: { owner: string; name: string },
-): Promise<BoardRef[]> {
-  if (!client) return []
+): Promise<BoardCandidates> {
+  if (!client) return { boards: [] }
   try {
     const data = await client.graphql<RepoBoardsResponse>(REPO_BOARDS_QUERY, {
       owner: repo.owner,
       name: repo.name,
     })
     const nodes = data.repository?.projectsV2.nodes ?? []
-    return nodes.map((n) => ({ provider: 'github' as const, owner: n.owner.login, number: n.number }))
-  } catch {
-    return []
+    return {
+      boards: nodes.map((n) => ({
+        provider: 'github' as const,
+        owner: n.owner.login,
+        number: n.number,
+      })),
+    }
+  } catch (error) {
+    return {
+      boards: [],
+      problem:
+        `Armature could not ask GitHub which boards contain ${repo.owner}/${repo.name}: ` +
+        redactCredentials(error instanceof Error ? error.message : String(error)),
+    }
   }
 }
 
@@ -134,12 +166,13 @@ export async function loadResolvedConfig(deps: ConfigIODeps): Promise<ResolvedCo
 
   // If origin is absent or can't be parsed, boardsContainingRepo has no owner/repo to ask
   // about — resolveConfig below raises the same ConfigError, so this just avoids a doomed query.
-  let candidates: BoardRef[] = []
+  let candidates: BoardCandidates = { boards: [] }
   if (origin.url !== null) {
     try {
       candidates = await boardsContainingRepo(deps.client, parseOriginUrl(origin.url))
     } catch {
-      candidates = []
+      // parseOriginUrl rejected the remote; resolveConfig raises the same error below.
+      candidates = { boards: [] }
     }
   }
 
@@ -149,6 +182,7 @@ export async function loadResolvedConfig(deps: ConfigIODeps): Promise<ResolvedCo
     repoConfig,
     userConfig,
     env: deps.env,
-    boardsContainingRepo: candidates,
+    boardsContainingRepo: candidates.boards,
+    boardsProblem: candidates.problem,
   })
 }

@@ -16841,7 +16841,9 @@ function resolveConfig(input) {
     throw new ConfigError(
       `No board found for ${subject}. Add .armature.json with a "board" key, or set ARMATURE_BOARD to "github:owner/number".` + // Only now does the missing origin matter: without it there was no repository to ask
       // which boards contain it, which is why nothing could be derived.
-      (input.originProblem ? ` ${input.originProblem}` : "")
+      (input.originProblem ? ` ${input.originProblem}` : "") + // Likewise the lookup's own failure: nothing was derived because nothing answered, and
+      // saying so is what turns a wrong sentence about the user's setup into a real lead.
+      (input.boardsProblem ? ` ${input.boardsProblem}` : "")
     );
   } else {
     const names = input.boardsContainingRepo.map((b) => `${b.owner}/${b.number}`).join(", ");
@@ -16896,21 +16898,36 @@ var REPO_BOARDS_QUERY = `
 query($owner:String!,$name:String!){
   repository(owner:$owner,name:$name){
     projectsV2(first:100){
-      nodes{ number owner{ login } }
+      nodes{
+        number
+        owner{
+          ... on User { login }
+          ... on Organization { login }
+        }
+      }
     }
   }
 }`;
 async function boardsContainingRepo(client, repo) {
-  if (!client) return [];
+  if (!client) return { boards: [] };
   try {
     const data = await client.graphql(REPO_BOARDS_QUERY, {
       owner: repo.owner,
       name: repo.name
     });
     const nodes = data.repository?.projectsV2.nodes ?? [];
-    return nodes.map((n) => ({ provider: "github", owner: n.owner.login, number: n.number }));
-  } catch {
-    return [];
+    return {
+      boards: nodes.map((n) => ({
+        provider: "github",
+        owner: n.owner.login,
+        number: n.number
+      }))
+    };
+  } catch (error2) {
+    return {
+      boards: [],
+      problem: `Armature could not ask GitHub which boards contain ${repo.owner}/${repo.name}: ` + redactCredentials(error2 instanceof Error ? error2.message : String(error2))
+    };
   }
 }
 async function loadResolvedConfig(deps) {
@@ -16927,12 +16944,12 @@ async function loadResolvedConfig(deps) {
       })
     )
   ]);
-  let candidates = [];
+  let candidates = { boards: [] };
   if (origin.url !== null) {
     try {
       candidates = await boardsContainingRepo(deps.client, parseOriginUrl(origin.url));
     } catch {
-      candidates = [];
+      candidates = { boards: [] };
     }
   }
   return resolveConfig({
@@ -16941,7 +16958,8 @@ async function loadResolvedConfig(deps) {
     repoConfig,
     userConfig,
     env: deps.env,
-    boardsContainingRepo: candidates
+    boardsContainingRepo: candidates.boards,
+    boardsProblem: candidates.problem
   });
 }
 
@@ -17114,22 +17132,24 @@ function inferStatusSemantics(optionNames) {
 }
 var BOARD_QUERY = `
 query($owner:String!,$number:Int!,$cursor:String){
-  organization(login:$owner){
-    projectV2(number:$number){
+  repositoryOwner(login:$owner){
+    ... on User { projectV2(number:$number){ ...boardFields } }
+    ... on Organization { projectV2(number:$number){ ...boardFields } }
+  }
+}
+fragment boardFields on ProjectV2 {
+  id
+  field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } }
+  items(first:100, after:$cursor){
+    pageInfo{ hasNextPage endCursor }
+    nodes{
       id
-      field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } }
-      items(first:100, after:$cursor){
-        pageInfo{ hasNextPage endCursor }
-        nodes{
-          id
-          fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } }
-          content{
-            ... on Issue {
-              number title state
-              repository{ owner{ login } name }
-              parent{ number repository{ owner{ login } name } }
-            }
-          }
+      fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      content{
+        ... on Issue {
+          number title state
+          repository{ owner{ login } name }
+          parent{ number repository{ owner{ login } name } }
         }
       }
     }
@@ -17137,12 +17157,12 @@ query($owner:String!,$number:Int!,$cursor:String){
 }`;
 async function surveyBoard(client, board, boardSource) {
   const head = await client.graphql(BOARD_QUERY, { owner: board.owner, number: board.number, cursor: null });
-  const project = head.organization?.projectV2;
+  const project = head.repositoryOwner?.projectV2;
   if (!project) throw new Error(`No project ${board.owner}/${board.number} is visible to this credential.`);
   const raw = await client.collectAll(
     BOARD_QUERY,
     { owner: board.owner, number: board.number },
-    (d) => d.organization.projectV2.items
+    (d) => d.repositoryOwner.projectV2.items
   );
   const items = raw.filter((n) => n.content?.number != null).map((n) => ({
     id: n.id,
@@ -17733,7 +17753,14 @@ async function dispatch(provider, name, args, options) {
       throw new Error(`Unknown tool "${name}".`);
   }
 }
-async function main() {
+function makeServiceLoader(build) {
+  let cached2 = null;
+  return async () => {
+    cached2 ??= await build();
+    return cached2;
+  };
+}
+async function buildServices() {
   const credential = await resolveCredential({ readCliToken: readCliTokenFromGh, env: process.env });
   const client = new GitHubClient(credential);
   const config2 = await loadResolvedConfig({ env: process.env, client });
@@ -17741,15 +17768,19 @@ async function main() {
     boardSource: config2.boardSource,
     dryRun: DRY_RUN
   });
-  const refResolver = makeRefResolver(provider, readSiblingConfigFrom(client));
+  return { provider, resolveRef: makeRefResolver(provider, readSiblingConfigFrom(client)) };
+}
+async function main() {
   const server = new Server(
     { name: "armature", version: VERSION },
     { capabilities: { tools: {} } }
   );
+  const services = makeServiceLoader(buildServices);
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = request.params.arguments ?? {};
-    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef: refResolver });
+    const { provider, resolveRef } = await services();
+    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef });
   });
   await server.connect(new StdioServerTransport());
 }
@@ -17774,5 +17805,6 @@ export {
   UnsupportedParentError,
   dispatch,
   isEntryPoint,
-  makeRefResolver
+  makeRefResolver,
+  makeServiceLoader
 };

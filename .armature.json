@@ -1,0 +1,6 @@
+{
+  "board":  { "provider": "github", "owner": "ryanlindsey", "number": 1 },
+  "alias":  "armature",
+  "verify": ["npm test", "npm run typecheck"],
+  "commit": { "convention": "conventional", "types": "release-please-config.json" }
+}

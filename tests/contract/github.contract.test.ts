@@ -21,8 +21,11 @@ function issue(repo: string, number: number) {
 // Two repositories both numbering an issue 278 — the collision the incident was made of.
 const nodes = [issue('web', 278), issue('api', 278), issue('web', 12)]
 
+// Rooted at repositoryOwner, matching BOARD_QUERY: it resolves a user account and an
+// organization alike, where `organization(login:)` fails outright on the former.
 const boardResponse = {
-  organization: {
+  repositoryOwner: {
+    __typename: 'Organization',
     projectV2: {
       id: 'PVT_1',
       field: {
