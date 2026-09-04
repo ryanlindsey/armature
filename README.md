@@ -1,8 +1,14 @@
 # armature
 
-A Claude Code plugin that drives epics and tickets across many repositories from one GitHub
-Projects board, over a typed MCP tool surface — so "what's next" and "close this out" have one
-implementation that means the same thing in every repository on the board.
+Agentic engineering, driven from the board. Armature answers "what should I work on next?" across
+every repository on one GitHub Projects board, then holds the agent to a loop that ends in a
+reviewable pull request: pick, claim, work, verify, hand back. The facts live in a typed MCP tool
+surface; the judgment lives in a skill — so "what's next" and "close this out" mean the same thing
+in every repository on the board, run after run.
+
+An agent working alone re-decides the shape of the work every session. Armature makes that shape a
+fixture: one item at a time, claimed on the board before a line is written, every reference
+qualified as `owner/repo#number`, and a human — never the agent — merging the result.
 
 [Superpowers](https://github.com/obra/superpowers) models one repository, one worktree, one branch —
 and none of its skills knows what a ticket is. Armature is the layer above: it decides which work is
