@@ -63,7 +63,7 @@ The MCP server exposes six tools:
 | `item_get` | One work item's body, status, and epic (with the repository the epic lives in). |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
-| `item_create` | Create an issue and add it to the board together. Reports an orphan loudly if the add fails. It does not link the new issue to a parent epic — set that on the issue afterwards. |
+| `item_create` | Create an issue, add it to the board, and set it to the board's todo status, so `board_next` can return it without a second call. Reports loudly if either write fails. It does not link the new issue to a parent epic — set that on the issue afterwards. |
 
 Every reference in and out is `owner/repo#number`, or a `github.com` issue URL. A bare number is
 refused, and armature never emits one.

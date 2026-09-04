@@ -297,6 +297,23 @@ export class OrphanedIssueError extends Error {
   }
 }
 
+// The half-landing that OrphanedIssueError does not describe. Both mean "created, then something
+// failed", but they leave the board in different states and want different repairs: an orphan is
+// off the board entirely, while this item is on it and merely statusless — which is invisible to
+// board_next but perfectly visible to board_survey. Telling a reader to "add it to the board"
+// here would send them after a problem they do not have, so it gets its own error and names the
+// tool that fixes the one they do.
+export class StatuslessItemError extends Error {
+  constructor(ref: WorkItemRef, status: string, cause: string) {
+    super(
+      `Created ${formatRef(ref)} and added it to the board, but could not set its status to ` +
+        `"${status}": ${cause}. The item is on the board with no status, so board_next will not ` +
+        `return it. Set it with item_status, or close the issue.`,
+    )
+    this.name = 'StatuslessItemError'
+  }
+}
+
 const REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`
 
 const CREATE_ISSUE = `
@@ -319,15 +336,19 @@ export async function createItem(
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
   const ref = { owner: input.owner, repo: input.repo, number: 0 }
 
-  // The dry run must describe what the real path below would actually produce, and nothing more.
-  // The real path creates the issue, adds it to the board, and returns `read(madeRef)`: adding an
-  // item to a board sets no Status field, and no sub-issue mutation is issued, so a fresh item
-  // has an unset status and no parent. Earlier this reported `snapshot.semantics.todo` and the
-  // requested parent as an attached epic — three effects the real path never produced.
+  // The dry run must describe what the real path below would actually produce — no more and no
+  // less. The real path creates the issue, adds it to the board, then sets the board's todo
+  // status and returns the verified read-back, so a fresh item has that status and no parent.
+  //
+  // This value has been wrong in both directions. It once reported `snapshot.semantics.todo` and
+  // the requested parent as an attached epic, against a real path that set neither; the fix
+  // pinned it to `null`, correct then and an understatement now that the real path does set the
+  // status. Whichever way it drifts, the failure is the same one: a caller acts on a prediction
+  // of an effect that does not match what happens without the flag.
   if (options.dryRun) {
     return {
       ref, id: '(dry-run)', title: input.title, body: input.body, state: 'OPEN',
-      status: null, projectItemId: '(dry-run)', parent: null, epic: null,
+      status: snapshot.semantics.todo, projectItemId: '(dry-run)', parent: null, epic: null,
     }
   }
 
@@ -348,5 +369,17 @@ export async function createItem(
     throw new OrphanedIssueError(madeRef, error instanceof Error ? error.message : String(error))
   }
 
-  return read(madeRef)
+  // Adding an item to a board sets no Status field, and `board_next` only ever returns items in
+  // the board's todo status — so without this write the item armature just created is one no
+  // selector can reach. `setStatus` rather than a bare mutation because a status this path does
+  // not verify is the same silent half-effect in a new place.
+  try {
+    return await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, { read })
+  } catch (error) {
+    throw new StatuslessItemError(
+      madeRef,
+      snapshot.semantics.todo,
+      error instanceof Error ? error.message : String(error),
+    )
+  }
 }

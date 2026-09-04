@@ -73,7 +73,9 @@ export const TOOLS = [
   {
     name: 'item_create',
     description:
-      'Create an issue and add it to the board together. Reports an orphan loudly. ' +
+      'Create an issue, add it to the board, and set it to the board\'s todo status, so the new ' +
+      'item is one board_next can return without a second call. Reports loudly, and says which ' +
+      'of the two the board is left in, if either write fails. ' +
       'Does not link the new issue to a parent epic — set the parent on the issue afterwards.',
     inputSchema: {
       type: 'object',

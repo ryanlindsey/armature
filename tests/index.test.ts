@@ -578,4 +578,12 @@ describe('the declared tool surface', () => {
     // The description still mentions the parent, so a caller learns what to do instead.
     expect(create.description).toMatch(/set the parent on the issue afterwards/i)
   })
+
+  // "Adds it to the board" was true before and is still true, but it was never the whole answer:
+  // an item can be on the board and unreachable by board_next. The description is where a caller
+  // finds out whether creating an item is enough to make it workable, so it has to say.
+  it('says on item_create where the new item lands', () => {
+    const create = TOOLS.find((t) => t.name === 'item_create')!
+    expect(create.description).toMatch(/todo status/i)
+  })
 })
