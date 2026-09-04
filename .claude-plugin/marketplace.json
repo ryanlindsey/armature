@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Cross-repository epic and ticket orchestration",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
         "url": "https://github.com/ryanlindsey/armature.git"
       },
       "description": "Drive epics and tickets across many repositories from one project board.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "strict": true
     }
   ]

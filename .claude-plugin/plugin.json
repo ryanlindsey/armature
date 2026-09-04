@@ -1,6 +1,6 @@
 {
   "name": "armature",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Drive epics and tickets across many repositories from one project board, over a typed MCP tool surface.",
   "author": {
     "name": "Ryan Lindsey"
