@@ -132,6 +132,79 @@ export class UnsupportedParentError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Argument validation.
+//
+// The low-level SDK `Server` does not validate a call against the tool's `inputSchema`, so the
+// schemas above are documentation for the model and nothing more: whatever JSON a caller sends
+// arrives here untouched. Casting it to `Record<string, string>` and trusting it produced errors
+// that named the wrong problem — `ref: 278`, a JSON number and the most natural way a model
+// reproduces the original incident, died as `TypeError: input.trim is not a function`, so
+// BareRefError never fired for the one case it exists for; a missing `ref` threw a different
+// TypeError; and `item_create` with no `title` reached the provider and created an untitled
+// issue. Everything is checked here, at the boundary, and raises the domain error the value
+// deserves.
+// ---------------------------------------------------------------------------------------------
+
+export class InvalidArgumentError extends Error {
+  constructor(tool: string, field: string, expected: string, got: unknown) {
+    super(
+      `${tool} needs "${field}" to be ${expected}, but received ${describeValue(got)}. ` +
+        `Tool arguments are not checked by the transport, so armature checks them itself.`,
+    )
+    this.name = 'InvalidArgumentError'
+  }
+}
+
+function describeValue(value: unknown): string {
+  if (value === undefined) return 'nothing'
+  if (value === null) return 'null'
+  if (typeof value === 'string') return value.trim() === '' ? 'an empty string' : 'a blank value'
+  if (typeof value === 'number') return `a number (${value})`
+  if (typeof value === 'boolean') return `a boolean (${value})`
+  if (Array.isArray(value)) return 'an array'
+  return `a ${typeof value}`
+}
+
+/**
+ * A reference-shaped argument, as a string for parseRef or the alias resolver to interpret.
+ *
+ * A number here is not a type error, it is *the* error: `278` is a bare number, and issue numbers
+ * are not unique across the repositories on a board. It gets BareRefError with its full
+ * explanation, exactly as `"278"` would.
+ */
+function refArgument(tool: string, field: string, value: unknown): string {
+  if (typeof value === 'number' || typeof value === 'bigint') throw new BareRefError(String(value))
+  if (typeof value !== 'string') {
+    throw new InvalidArgumentError(tool, field, 'a reference like acme/web#278', value)
+  }
+  return value
+}
+
+/** A required argument that must carry something. */
+function requiredString(tool: string, field: string, value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new InvalidArgumentError(tool, field, 'a non-empty string', value)
+  }
+  return value
+}
+
+/** A required argument that must be a string but may legitimately be empty, such as a body. */
+function requiredText(tool: string, field: string, value: unknown): string {
+  if (typeof value !== 'string') throw new InvalidArgumentError(tool, field, 'a string', value)
+  return value
+}
+
+/**
+ * An optional filter. `undefined` and `null` mean "not asked"; an empty string does not — see
+ * selectNext, which answers it rather than dropping it.
+ */
+function optionalString(tool: string, field: string, value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string') throw new InvalidArgumentError(tool, field, 'a string', value)
+  return value
+}
+
 export type RefResolver = (token: string) => Promise<WorkItemRef>
 
 // Wraps parseRef with a fallback through the alias map: a token parseRef rejects as unqualified
@@ -199,7 +272,9 @@ export type DispatchOptions = {
 export async function dispatch(
   provider: BoardProvider,
   name: string,
-  args: Record<string, string>,
+  // `unknown`, not `string`: the transport performs no schema validation, so every value is
+  // checked here before it is used. See InvalidArgumentError above.
+  args: Record<string, unknown>,
   options: DispatchOptions,
 ): Promise<{ content: { type: 'text'; text: string }[] }> {
   const resolveRef: RefResolver = options.resolveRef ?? (async (token) => parseRef(token))
@@ -209,20 +284,22 @@ export async function dispatch(
       return ok(await provider.survey())
 
     case 'board_next': {
+      const repo = optionalString(name, 'repo', args.repo)
+      // `!== undefined` rather than truthiness, so `epic: ""` is refused as the unusable
+      // reference it is instead of quietly widening the question to the whole board.
+      const epic =
+        args.epic === undefined || args.epic === null
+          ? undefined
+          : await resolveRef(refArgument(name, 'epic', args.epic))
       const snapshot = await provider.survey()
-      return ok(
-        selectNext(snapshot, {
-          repo: args.repo,
-          epic: args.epic ? await resolveRef(args.epic) : undefined,
-        }),
-      )
+      return ok(selectNext(snapshot, { repo, epic }))
     }
 
     case 'item_get':
-      return ok(await provider.getItem(await resolveRef(args.ref!)))
+      return ok(await provider.getItem(await resolveRef(refArgument(name, 'ref', args.ref))))
 
     case 'item_claim': {
-      const ref = await resolveRef(args.ref!)
+      const ref = await resolveRef(refArgument(name, 'ref', args.ref))
       const before = await provider.getItem(ref)
       const after = await provider.claim(ref)
       logMutation(
@@ -239,9 +316,10 @@ export async function dispatch(
     }
 
     case 'item_status': {
-      const ref = await resolveRef(args.ref!)
+      const ref = await resolveRef(refArgument(name, 'ref', args.ref))
+      const status = requiredString(name, 'status', args.status)
       const before = await provider.getItem(ref)
-      const after = await provider.setStatus(ref, args.status!)
+      const after = await provider.setStatus(ref, status)
       logMutation(
         {
           ref: formatRef(ref),
@@ -260,14 +338,21 @@ export async function dispatch(
       // `parent` could only ever have been discarded. See UnsupportedParentError.
       if (args.parent !== undefined && args.parent !== null) throw new UnsupportedParentError()
 
-      const [owner, repoName] = (args.repo ?? '').split('/')
-      if (!owner || !repoName) throw new Error(`"repo" must be owner/name, got "${args.repo}".`)
-      const created = await provider.create({
-        owner,
-        repo: repoName,
-        title: args.title!,
-        body: args.body!,
-      })
+      const repoArg = requiredString(name, 'repo', args.repo)
+      const title = requiredString(name, 'title', args.title)
+      // A body may legitimately be empty; a title may not — an untitled issue is what reached
+      // the provider before anything here was checked.
+      const body = requiredText(name, 'body', args.body)
+
+      // Length-checked, not just destructured: "acme/web/extra".split('/') yields three parts,
+      // and taking the first two would create the issue somewhere the caller did not name.
+      const parts = repoArg.split('/')
+      const [owner, repoName] = parts
+      if (parts.length !== 2 || !owner || !repoName) {
+        throw new Error(`"repo" must be owner/name, got "${repoArg}".`)
+      }
+
+      const created = await provider.create({ owner, repo: repoName, title, body })
       logMutation(
         {
           // See presentCreated above: a dry-run ref.number is not real, so the log gets the same
@@ -311,7 +396,7 @@ async function main(): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const args = (request.params.arguments ?? {}) as Record<string, string>
+    const args = (request.params.arguments ?? {}) as Record<string, unknown>
     return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef: refResolver })
   })
 

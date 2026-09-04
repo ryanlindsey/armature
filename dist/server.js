@@ -17447,11 +17447,12 @@ function selectNext(snapshot, options) {
   const isEpic = (i) => parents.has(key(i.ref));
   const children = snapshot.items.filter((i) => !isEpic(i));
   const repoLower = options.repo?.toLowerCase();
-  const inRepo = repoLower ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower) : children;
-  const underEpic = options.epic ? inRepo.filter((i) => i.parent && key(i.parent) === key(options.epic)) : inRepo;
+  const inRepo = repoLower !== void 0 ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower) : children;
+  const epicKey = options.epic ? key(options.epic).toLowerCase() : void 0;
+  const underEpic = epicKey !== void 0 ? inRepo.filter((i) => i.parent !== null && key(i.parent).toLowerCase() === epicKey) : inRepo;
   const actionable = underEpic.filter((i) => i.status === todo && i.state === "OPEN");
   if (actionable.length === 0) {
-    if (inRepo.length === 0 && options.repo) {
+    if (inRepo.length === 0 && options.repo !== void 0) {
       return {
         kind: "blocked",
         because: `No items matching filter "${options.repo}" found on board.`
@@ -17463,7 +17464,7 @@ function selectNext(snapshot, options) {
         because: `No items matching epic filter ${formatRef(options.epic)} found on board.`
       };
     }
-    const scope = options.repo ? ` in ${options.repo}` : "";
+    const scope = options.repo !== void 0 ? ` in "${options.repo}"` : "";
     return {
       kind: "blocked",
       because: `Nothing is actionable${scope}: no open item sits in "${todo}". ${underEpic.length} item(s) were considered.`
@@ -17573,6 +17574,45 @@ var UnsupportedParentError = class extends Error {
     this.name = "UnsupportedParentError";
   }
 };
+var InvalidArgumentError = class extends Error {
+  constructor(tool, field, expected, got) {
+    super(
+      `${tool} needs "${field}" to be ${expected}, but received ${describeValue(got)}. Tool arguments are not checked by the transport, so armature checks them itself.`
+    );
+    this.name = "InvalidArgumentError";
+  }
+};
+function describeValue(value) {
+  if (value === void 0) return "nothing";
+  if (value === null) return "null";
+  if (typeof value === "string") return value.trim() === "" ? "an empty string" : "a blank value";
+  if (typeof value === "number") return `a number (${value})`;
+  if (typeof value === "boolean") return `a boolean (${value})`;
+  if (Array.isArray(value)) return "an array";
+  return `a ${typeof value}`;
+}
+function refArgument(tool, field, value) {
+  if (typeof value === "number" || typeof value === "bigint") throw new BareRefError(String(value));
+  if (typeof value !== "string") {
+    throw new InvalidArgumentError(tool, field, "a reference like acme/web#278", value);
+  }
+  return value;
+}
+function requiredString(tool, field, value) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new InvalidArgumentError(tool, field, "a non-empty string", value);
+  }
+  return value;
+}
+function requiredText(tool, field, value) {
+  if (typeof value !== "string") throw new InvalidArgumentError(tool, field, "a string", value);
+  return value;
+}
+function optionalString(tool, field, value) {
+  if (value === void 0 || value === null) return void 0;
+  if (typeof value !== "string") throw new InvalidArgumentError(tool, field, "a string", value);
+  return value;
+}
 function makeRefResolver(provider, read) {
   let cachedMap = null;
   const getMap = async () => {
@@ -17603,18 +17643,15 @@ async function dispatch(provider, name, args, options) {
     case "board_survey":
       return ok(await provider.survey());
     case "board_next": {
+      const repo = optionalString(name, "repo", args.repo);
+      const epic = args.epic === void 0 || args.epic === null ? void 0 : await resolveRef(refArgument(name, "epic", args.epic));
       const snapshot = await provider.survey();
-      return ok(
-        selectNext(snapshot, {
-          repo: args.repo,
-          epic: args.epic ? await resolveRef(args.epic) : void 0
-        })
-      );
+      return ok(selectNext(snapshot, { repo, epic }));
     }
     case "item_get":
-      return ok(await provider.getItem(await resolveRef(args.ref)));
+      return ok(await provider.getItem(await resolveRef(refArgument(name, "ref", args.ref))));
     case "item_claim": {
-      const ref = await resolveRef(args.ref);
+      const ref = await resolveRef(refArgument(name, "ref", args.ref));
       const before = await provider.getItem(ref);
       const after = await provider.claim(ref);
       logMutation(
@@ -17630,9 +17667,10 @@ async function dispatch(provider, name, args, options) {
       return ok(presentMutation(after, options.dryRun));
     }
     case "item_status": {
-      const ref = await resolveRef(args.ref);
+      const ref = await resolveRef(refArgument(name, "ref", args.ref));
+      const status = requiredString(name, "status", args.status);
       const before = await provider.getItem(ref);
-      const after = await provider.setStatus(ref, args.status);
+      const after = await provider.setStatus(ref, status);
       logMutation(
         {
           ref: formatRef(ref),
@@ -17647,14 +17685,15 @@ async function dispatch(provider, name, args, options) {
     }
     case "item_create": {
       if (args.parent !== void 0 && args.parent !== null) throw new UnsupportedParentError();
-      const [owner, repoName] = (args.repo ?? "").split("/");
-      if (!owner || !repoName) throw new Error(`"repo" must be owner/name, got "${args.repo}".`);
-      const created = await provider.create({
-        owner,
-        repo: repoName,
-        title: args.title,
-        body: args.body
-      });
+      const repoArg = requiredString(name, "repo", args.repo);
+      const title = requiredString(name, "title", args.title);
+      const body = requiredText(name, "body", args.body);
+      const parts = repoArg.split("/");
+      const [owner, repoName] = parts;
+      if (parts.length !== 2 || !owner || !repoName) {
+        throw new Error(`"repo" must be owner/name, got "${repoArg}".`);
+      }
+      const created = await provider.create({ owner, repo: repoName, title, body });
       logMutation(
         {
           // See presentCreated above: a dry-run ref.number is not real, so the log gets the same
@@ -17706,6 +17745,7 @@ if (isEntryPoint(import.meta.url, process.argv[1])) {
   });
 }
 export {
+  InvalidArgumentError,
   TOOLS,
   UnsupportedParentError,
   dispatch,

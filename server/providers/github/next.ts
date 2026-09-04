@@ -26,18 +26,31 @@ export function selectNext(
   const isEpic = (i: BoardItem) => parents.has(key(i.ref))
 
   const children = snapshot.items.filter((i) => !isEpic(i))
+
+  // `!== undefined`, not truthiness: a model asked for an optional string it has nothing to say
+  // about passes "". Treated as falsy, that silently became "no filter" — board_next answered
+  // about the whole board while the caller believed it had narrowed the question, and the
+  // `because` never mentioned a filter at all. An empty filter now matches nothing and says so.
   const repoLower = options.repo?.toLowerCase()
-  const inRepo = repoLower
-    ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower)
-    : children
-  const underEpic = options.epic
-    ? inRepo.filter((i) => i.parent && key(i.parent) === key(options.epic!))
-    : inRepo
+  const inRepo =
+    repoLower !== undefined
+      ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower)
+      : children
+
+  // Lower-cased on both sides for the same reason `repo` is: `epic` arrives from a person or a
+  // model, and GitHub's own casing is what the board reports. Matching exactly through formatRef
+  // meant `--epic ACME/platform#10` reported the epic "not found" — failing loud, but stating
+  // something false.
+  const epicKey = options.epic ? key(options.epic).toLowerCase() : undefined
+  const underEpic =
+    epicKey !== undefined
+      ? inRepo.filter((i) => i.parent !== null && key(i.parent).toLowerCase() === epicKey)
+      : inRepo
 
   const actionable = underEpic.filter((i) => i.status === todo && i.state === 'OPEN')
 
   if (actionable.length === 0) {
-    if (inRepo.length === 0 && options.repo) {
+    if (inRepo.length === 0 && options.repo !== undefined) {
       return {
         kind: 'blocked',
         because: `No items matching filter "${options.repo}" found on board.`,
@@ -49,7 +62,7 @@ export function selectNext(
         because: `No items matching epic filter ${formatRef(options.epic)} found on board.`,
       }
     }
-    const scope = options.repo ? ` in ${options.repo}` : ''
+    const scope = options.repo !== undefined ? ` in "${options.repo}"` : ''
     return {
       kind: 'blocked',
       because:

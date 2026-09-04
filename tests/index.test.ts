@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatch, makeRefResolver, TOOLS } from '../server/index.js'
+import { dispatch, InvalidArgumentError, makeRefResolver, TOOLS } from '../server/index.js'
 import { AliasConflictError } from '../server/providers/github/aliases.js'
 import type { SiblingConfigReader } from '../server/providers/github/aliases.js'
 import type { BoardProvider, BoardSnapshot } from '../server/providers/types.js'
@@ -255,6 +255,123 @@ describe('dispatch: dry runs disclose themselves', () => {
       dryRun: true, logWrite: (l) => lines.push(l),
     })
     expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+})
+
+// The low-level SDK Server performs no inputSchema validation, so whatever JSON a caller sends
+// arrives untouched. `ref: 278` — a JSON number, the most natural way a model reproduces the
+// original incident — used to reach parseRef and die as "input.trim is not a function", so the
+// carefully written BareRefError never fired for the one case it was written for.
+describe('dispatch: arguments are validated at the boundary', () => {
+  it('reads a JSON number in `ref` as the bare number it is', async () => {
+    const provider = makeProvider({ getItem: vi.fn() })
+    await expect(dispatch(provider, 'item_get', { ref: 278 }, { dryRun: false })).rejects.toThrow(
+      BareRefError,
+    )
+  })
+
+  it('reads a JSON number in `epic` as a bare number too', async () => {
+    const provider = makeProvider()
+    await expect(dispatch(provider, 'board_next', { epic: 9 }, { dryRun: false })).rejects.toThrow(
+      BareRefError,
+    )
+  })
+
+  it('names the missing argument instead of failing inside the parser', async () => {
+    const provider = makeProvider({ getItem: vi.fn() })
+    const error = await dispatch(provider, 'item_get', {}, { dryRun: false }).catch((e: Error) => e)
+
+    expect(error).toBeInstanceOf(InvalidArgumentError)
+    expect((error as Error).message).toContain('ref')
+    expect((error as Error).message).not.toMatch(/is not a function/)
+  })
+
+  it('refuses a null ref', async () => {
+    const getItem = vi.fn()
+    const provider = makeProvider({ getItem })
+    await expect(
+      dispatch(provider, 'item_claim', { ref: null }, { dryRun: false, logWrite: () => {} }),
+    ).rejects.toThrow(InvalidArgumentError)
+    expect(getItem).not.toHaveBeenCalled()
+  })
+
+  it('refuses item_create with no title rather than creating an untitled issue', async () => {
+    const create = vi.fn()
+    const provider = makeProvider({ create })
+    await expect(
+      dispatch(provider, 'item_create', { repo: 'acme/web', body: 'b' }, { dryRun: false, logWrite: () => {} }),
+    ).rejects.toThrow(InvalidArgumentError)
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty title', async () => {
+    const create = vi.fn()
+    const provider = makeProvider({ create })
+    await expect(
+      dispatch(provider, 'item_create', { repo: 'acme/web', title: '  ', body: 'b' }, {
+        dryRun: false, logWrite: () => {},
+      }),
+    ).rejects.toThrow(InvalidArgumentError)
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('allows an empty body, which is a legitimate issue', async () => {
+    const create = vi.fn().mockResolvedValue({
+      ref: { owner: 'acme', repo: 'web', number: 42 },
+      id: 'I_1', title: 't', body: '', state: 'OPEN',
+      status: null, projectItemId: 'PVTI_1', parent: null, epic: null,
+    })
+    const provider = makeProvider({ create })
+    await dispatch(provider, 'item_create', { repo: 'acme/web', title: 't', body: '' }, {
+      dryRun: false, logWrite: () => {},
+    })
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ body: '' }))
+  })
+
+  it('refuses a non-string status', async () => {
+    const setStatus = vi.fn()
+    const provider = makeProvider({ getItem: vi.fn(), setStatus })
+    await expect(
+      dispatch(provider, 'item_status', { ref: 'acme/web#5', status: 3 }, {
+        dryRun: false, logWrite: () => {},
+      }),
+    ).rejects.toThrow(InvalidArgumentError)
+    expect(setStatus).not.toHaveBeenCalled()
+  })
+
+  it('refuses a non-string repo filter', async () => {
+    const provider = makeProvider()
+    await expect(dispatch(provider, 'board_next', { repo: 7 }, { dryRun: false })).rejects.toThrow(
+      InvalidArgumentError,
+    )
+  })
+
+  it('refuses a repo with more than one slash rather than silently truncating it', async () => {
+    const create = vi.fn()
+    const provider = makeProvider({ create })
+    await expect(
+      dispatch(provider, 'item_create', { repo: 'acme/web/extra', title: 't', body: 'b' }, {
+        dryRun: false, logWrite: () => {},
+      }),
+    ).rejects.toThrow(/owner\/name/)
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  // An empty string is what a model passes for an optional string it has nothing to say about.
+  // It used to be silently dropped, so board_next answered about the whole board while the
+  // caller believed it had asked about one repository.
+  it('passes an empty repo filter through, so it is answered rather than ignored', async () => {
+    const provider = makeProvider()
+    const result = await dispatch(provider, 'board_next', { repo: '' }, { dryRun: false })
+    const body = textOf(result) as { kind: string }
+    expect(body.kind).toBe('blocked')
+  })
+
+  it('refuses an empty epic filter rather than answering about the whole board', async () => {
+    const provider = makeProvider()
+    await expect(dispatch(provider, 'board_next', { epic: '' }, { dryRun: false })).rejects.toThrow(
+      BareRefError,
+    )
   })
 })
 

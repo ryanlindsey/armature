@@ -119,6 +119,35 @@ describe('selectNext', () => {
     }
   })
 
+  // Models pass "" for an optional string they have nothing to say about. Treated as falsy, an
+  // empty repo filter silently became "no filter": board_next answered about the whole board and
+  // its `because` never mentioned a filter at all.
+  it('answers an empty repo filter rather than ignoring it', () => {
+    const s = snap([epic1, make('web', 5, 'Todo', 'child', epic1.ref)])
+    const result = selectNext(s, { repo: '' })
+    expect(result.kind).toBe('blocked')
+    if (result.kind === 'blocked') expect(result.because).toMatch(/filter/i)
+  })
+
+  // repo matched case-insensitively while epic matched through formatRef, which is exact — so
+  // --epic ACME/platform#10 reported the epic "not found", a loud failure stating something
+  // false.
+  it('matches the epic filter case-insensitively, as it already does for repo', () => {
+    const s = snap([
+      epic1,
+      make('web', 5, 'Todo', 'child', epic1.ref),
+    ])
+    const result = selectNext(s, { epic: { owner: 'ACME', repo: 'PLATFORM', number: 10 } })
+    expect(result.kind).toBe('item')
+    if (result.kind === 'item') expect(result.item.ref.number).toBe(5)
+  })
+
+  it('still reports a genuinely absent epic as absent', () => {
+    const s = snap([epic1, make('web', 5, 'Todo', 'child', epic1.ref)])
+    const result = selectNext(s, { epic: { owner: 'acme', repo: 'platform', number: 999 } })
+    expect(result.kind).toBe('blocked')
+  })
+
   it('distinguishes when epic filter matches no items on board', () => {
     const s = snap([
       epic1,
