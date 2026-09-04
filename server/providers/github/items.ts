@@ -309,11 +309,15 @@ export async function createItem(
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
   const ref = { owner: input.owner, repo: input.repo, number: 0 }
 
+  // The dry run must describe what the real path below would actually produce, and nothing more.
+  // The real path creates the issue, adds it to the board, and returns `read(madeRef)`: adding an
+  // item to a board sets no Status field, and no sub-issue mutation is issued, so a fresh item
+  // has an unset status and no parent. Earlier this reported `snapshot.semantics.todo` and the
+  // requested parent as an attached epic — three effects the real path never produced.
   if (options.dryRun) {
     return {
       ref, id: '(dry-run)', title: input.title, body: input.body, state: 'OPEN',
-      status: snapshot.semantics.todo, projectItemId: '(dry-run)', parent: input.parent ?? null,
-      epic: input.parent ?? null,
+      status: null, projectItemId: '(dry-run)', parent: null, epic: null,
     }
   }
 

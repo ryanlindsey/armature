@@ -26,12 +26,14 @@ export type BoardSnapshot = {
   collisions: Record<number, string[]>
 }
 
+// No `parent`: creating an issue and linking it to an epic are two operations, and v1 performs
+// only the first. A provider that accepted a parent it could not attach would report a success
+// the board does not show — see UnsupportedParentError in server/index.ts.
 export type CreateInput = {
   owner: string
   repo: string
   title: string
   body: string
-  parent?: WorkItemRef
 }
 
 export interface BoardProvider {

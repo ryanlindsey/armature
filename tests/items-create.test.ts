@@ -31,4 +31,18 @@ describe('createItem', () => {
     expect(client.graphql).not.toHaveBeenCalled()
     expect(result.title).toBe('A ticket')
   })
+
+  // The dry run's whole value is that it predicts the real path. Reporting a status the real
+  // path never sets, or an epic it never attaches, is a lie a caller acts on.
+  it('claims no effect in dry run that the real path does not produce', async () => {
+    const client = { graphql: vi.fn() } as any
+    const result = await createItem(client, board, snapshot, input, { dryRun: true })
+
+    // Adding an issue to a board sets no Status field: the real path's read-back reports
+    // whatever the board shows, which for a fresh item is unset.
+    expect(result.status).toBeNull()
+    // Nothing links the new issue to an epic — armature issues no sub-issue mutation.
+    expect(result.parent).toBeNull()
+    expect(result.epic).toBeNull()
+  })
 })

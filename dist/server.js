@@ -17261,10 +17261,10 @@ async function createItem(client, board, snapshot, input, options = {}) {
       title: input.title,
       body: input.body,
       state: "OPEN",
-      status: snapshot.semantics.todo,
+      status: null,
       projectItemId: "(dry-run)",
-      parent: input.parent ?? null,
-      epic: input.parent ?? null
+      parent: null,
+      epic: null
     };
   }
   const repo = await client.graphql(REPO_ID, { owner: input.owner, name: input.repo });
@@ -17473,14 +17473,13 @@ var TOOLS = [
   },
   {
     name: "item_create",
-    description: "Create an issue and add it to the board together. Reports an orphan loudly.",
+    description: "Create an issue and add it to the board together. Reports an orphan loudly. Does not link the new issue to a parent epic \u2014 set the parent on the issue afterwards.",
     inputSchema: {
       type: "object",
       properties: {
         repo: { type: "string", description: "owner/name" },
         title: { type: "string" },
-        body: { type: "string" },
-        parent: { type: "string", description: "Epic, as owner/repo#number" }
+        body: { type: "string" }
       },
       required: ["repo", "title", "body"]
     }
@@ -17494,6 +17493,14 @@ function presentCreated(created, dryRun) {
   const { ref: _omittedDryRunRef, ...rest } = created;
   return { ...rest, dryRun: true };
 }
+var UnsupportedParentError = class extends Error {
+  constructor() {
+    super(
+      'item_create does not link an issue to a parent epic. Armature v1 creates the issue and adds it to the board; sub-issue linking is not implemented, so a "parent" argument could only be discarded silently. Nothing was created. Call item_create without "parent", then set the parent on the issue afterwards.'
+    );
+    this.name = "UnsupportedParentError";
+  }
+};
 function makeRefResolver(provider, read) {
   let cachedMap = null;
   const getMap = async () => {
@@ -17555,14 +17562,14 @@ async function dispatch(provider, name, args, options) {
       return ok(after);
     }
     case "item_create": {
+      if (args.parent !== void 0 && args.parent !== null) throw new UnsupportedParentError();
       const [owner, repoName] = (args.repo ?? "").split("/");
       if (!owner || !repoName) throw new Error(`"repo" must be owner/name, got "${args.repo}".`);
       const created = await provider.create({
         owner,
         repo: repoName,
         title: args.title,
-        body: args.body,
-        parent: args.parent ? await resolveRef(args.parent) : void 0
+        body: args.body
       });
       logMutation(
         {
@@ -17607,6 +17614,8 @@ if (isEntryPoint) {
   });
 }
 export {
+  TOOLS,
+  UnsupportedParentError,
   dispatch,
   makeRefResolver
 };

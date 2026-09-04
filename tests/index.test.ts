@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatch, makeRefResolver } from '../server/index.js'
+import { dispatch, makeRefResolver, TOOLS } from '../server/index.js'
 import { AliasConflictError } from '../server/providers/github/aliases.js'
 import type { SiblingConfigReader } from '../server/providers/github/aliases.js'
 import type { BoardProvider, BoardSnapshot } from '../server/providers/types.js'
@@ -325,24 +325,66 @@ describe('dispatch: ref resolution', () => {
     expect(resolveRef).toHaveBeenCalledWith('apex#9')
   })
 
-  it("resolves item_create's parent through the injected resolver", async () => {
-    const resolveRef = vi.fn().mockResolvedValue({ owner: 'acme', repo: 'site.example', number: 9 })
-    const create = vi.fn().mockResolvedValue({
-      ref: { owner: 'acme', repo: 'web', number: 42 },
-      id: 'I_1', title: 't', body: 'b', state: 'OPEN',
-      status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null,
-    })
+})
+
+// item_create used to accept a `parent`, resolve it, and then discard it: the dry run reported
+// the epic attached and a Todo status, while the real path issued no sub-issue mutation at all
+// and returned an orphan. The capability was never real, so it is gone rather than implemented —
+// and a caller who passes `parent` must be told, not quietly ignored.
+describe('dispatch: item_create refuses a parent rather than discarding it', () => {
+  it('fails loud, creates nothing, and says the parent must be set afterwards', async () => {
+    const create = vi.fn()
+    const resolveRef = vi.fn()
     const provider = makeProvider({ create })
 
-    await dispatch(
+    await expect(
+      dispatch(
+        provider,
+        'item_create',
+        { repo: 'acme/web', title: 't', body: 'b', parent: 'acme/platform#9' },
+        { dryRun: false, resolveRef, logWrite: () => {} },
+      ),
+    ).rejects.toThrow(/parent/i)
+
+    expect(create).not.toHaveBeenCalled()
+    expect(resolveRef).not.toHaveBeenCalled()
+  })
+
+  it('names sub-issue linking as unsupported and states that nothing was created', async () => {
+    const provider = makeProvider()
+    const error = await dispatch(
       provider,
       'item_create',
-      { repo: 'acme/web', title: 't', body: 'b', parent: 'apex#9' },
-      { dryRun: false, resolveRef },
-    )
+      { repo: 'acme/web', title: 't', body: 'b', parent: 'acme/platform#9' },
+      { dryRun: false, logWrite: () => {} },
+    ).catch((e: Error) => e)
 
-    expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({ parent: { owner: 'acme', repo: 'site.example', number: 9 } }),
-    )
+    expect((error as Error).message).toMatch(/sub-issue/i)
+    expect((error as Error).message).toMatch(/nothing was created/i)
+  })
+
+  it('refuses in a dry run too, rather than reporting an attachment it could not make', async () => {
+    const create = vi.fn()
+    const provider = makeProvider({ create })
+
+    await expect(
+      dispatch(
+        provider,
+        'item_create',
+        { repo: 'acme/web', title: 't', body: 'b', parent: 'acme/platform#9' },
+        { dryRun: true, logWrite: () => {} },
+      ),
+    ).rejects.toThrow(/parent/i)
+    expect(create).not.toHaveBeenCalled()
+  })
+})
+
+describe('the declared tool surface', () => {
+  it('does not offer a parent on item_create', () => {
+    const create = TOOLS.find((t) => t.name === 'item_create')!
+    expect(Object.keys(create.inputSchema.properties)).not.toContain('parent')
+    expect(JSON.stringify(create.inputSchema)).not.toMatch(/parent/i)
+    // The description still mentions the parent, so a caller learns what to do instead.
+    expect(create.description).toMatch(/set the parent on the issue afterwards/i)
   })
 })

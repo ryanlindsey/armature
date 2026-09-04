@@ -17,7 +17,10 @@ import { VERSION } from './version.js'
 
 const DRY_RUN = process.env.ARMATURE_DRY_RUN === '1'
 
-const TOOLS = [
+// Exported so a test can assert what the server actually offers, not what its handler happens to
+// accept: a tool schema advertising a capability the handler does not deliver is the shape of the
+// item_create `parent` bug.
+export const TOOLS = [
   {
     name: 'board_next',
     description:
@@ -68,14 +71,15 @@ const TOOLS = [
   },
   {
     name: 'item_create',
-    description: 'Create an issue and add it to the board together. Reports an orphan loudly.',
+    description:
+      'Create an issue and add it to the board together. Reports an orphan loudly. ' +
+      'Does not link the new issue to a parent epic — set the parent on the issue afterwards.',
     inputSchema: {
       type: 'object',
       properties: {
         repo: { type: 'string', description: 'owner/name' },
         title: { type: 'string' },
         body: { type: 'string' },
-        parent: { type: 'string', description: 'Epic, as owner/repo#number' },
       },
       required: ['repo', 'title', 'body'],
     },
@@ -98,6 +102,25 @@ function presentCreated<T extends { ref: unknown }>(created: T, dryRun: boolean)
   if (!dryRun) return created
   const { ref: _omittedDryRunRef, ...rest } = created
   return { ...rest, dryRun: true }
+}
+
+// `item_create` used to take a `parent`, resolve it through the alias resolver, and then throw it
+// away: the dry run reported the epic attached and a Todo status, while the real path issued
+// REPO_ID / CREATE_ISSUE / ADD_TO_BOARD and no sub-issue mutation at all, then reported success.
+// The capability was removed rather than implemented — a real implementation needs a mutation,
+// read-back verification, and an API-availability answer, and sub-project 2 builds it with its
+// own tests. What must not survive is the silent discard: a caller who asks for a parent is told
+// plainly, before anything is created.
+export class UnsupportedParentError extends Error {
+  constructor() {
+    super(
+      'item_create does not link an issue to a parent epic. Armature v1 creates the issue and ' +
+        'adds it to the board; sub-issue linking is not implemented, so a "parent" argument ' +
+        'could only be discarded silently. Nothing was created. Call item_create without ' +
+        '"parent", then set the parent on the issue afterwards.',
+    )
+    this.name = 'UnsupportedParentError'
+  }
 }
 
 export type RefResolver = (token: string) => Promise<WorkItemRef>
@@ -212,6 +235,10 @@ export async function dispatch(
     }
 
     case 'item_create': {
+      // Refused before anything is resolved or created: v1 issues no sub-issue mutation, so a
+      // `parent` could only ever have been discarded. See UnsupportedParentError.
+      if (args.parent !== undefined && args.parent !== null) throw new UnsupportedParentError()
+
       const [owner, repoName] = (args.repo ?? '').split('/')
       if (!owner || !repoName) throw new Error(`"repo" must be owner/name, got "${args.repo}".`)
       const created = await provider.create({
@@ -219,7 +246,6 @@ export async function dispatch(
         repo: repoName,
         title: args.title!,
         body: args.body!,
-        parent: args.parent ? await resolveRef(args.parent) : undefined,
       })
       logMutation(
         {
