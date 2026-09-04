@@ -2,7 +2,12 @@
 
 A Claude Code plugin that drives epics and tickets across many repositories from one GitHub
 Projects board, over a typed MCP tool surface — so "what's next" and "close this out" have one
-implementation instead of a slash command copy-pasted into every repo.
+implementation that means the same thing in every repository on the board.
+
+[Superpowers](https://github.com/obra/superpowers) models one repository, one worktree, one branch —
+and none of its skills knows what a ticket is. Armature is the layer above: it decides which work is
+next across every repository on the board, and hands the doing to Superpowers. Together they are the
+whole path from "what's next" to an open PR — see [Better with Superpowers](#better-with-superpowers).
 
 ## Install
 
@@ -13,6 +18,44 @@ implementation instead of a slash command copy-pasted into every repo.
 
 That's it for most repositories — see [Configuration](#configuration) below for the zero-config
 path and when you need to say more.
+
+## Better with Superpowers
+
+Armature works alone. It is better paired with Superpowers, which is installed the same way:
+
+```
+/plugin marketplace add obra/superpowers
+/plugin install superpowers
+```
+
+One `/armature-next` run then crosses both plugins. Armature brackets the work — it picks, claims,
+verifies and hands back; Superpowers does everything in between:
+
+```
+  1  armature     board_next                       picks acme/checkout#278, with its reason
+  2  armature     item_get                         reads it — its epic is in acme/platform
+  3  armature     prerequisites                    a stated "Depends on" stops the claim
+  4  armature     item_claim                       → In Progress, verified either side
+  5  Superpowers  using-git-worktrees              an isolated worktree, green baseline
+  6  Superpowers  test-driven-development          red → green → refactor
+  7  Superpowers  requesting-code-review           a fresh subagent reads the diff
+  8  armature     verify                           runs the .armature.json verify list
+  9  Superpowers  finishing-a-development-branch   pushes and opens the pull request
+ 10  armature     item_status                      → the board's review status
+```
+
+Step 2 is the reason armature exists. `#278` names a different issue in every repository on the
+board, and the epic for `acme/checkout#278` is an `acme/platform` number that means something else
+in checkout. Every reference in and out is qualified for exactly that reason.
+
+Step 9 is where the two plugins have to be told apart. `finishing-a-development-branch` offers to
+merge the branch locally; armature takes its push-and-open-a-PR option instead and never asks. The
+never-merge rule is armature's, not that skill's — a human merges.
+
+Armature reimplements none of Superpowers and requires none of it. Without it the same ten steps
+run, with a plain feature branch, a hand-written failing test, a re-read of the diff, and
+`gh pr create` standing in for steps 5, 6, 7 and 9 — the skill's
+[Without Superpowers](./skills/working-the-board/SKILL.md#without-superpowers) table says which.
 
 ## Configuration
 
@@ -79,12 +122,10 @@ refused, and armature never emits one.
 ## Skill
 
 `working-the-board` is the judgment layer on top of the tools: choose, read, claim, isolate,
-implement, verify, open a PR, hand back — and it never merges. When
-[Superpowers](https://github.com/obra/superpowers) is installed, it uses
-`superpowers:using-git-worktrees` and `superpowers:test-driven-development` for isolation and
-TDD; without Superpowers it falls back to a plain feature branch and write-the-test-first by
-hand. Either way, it refuses to fall back to raw `gh` commands if the armature tools are
-unavailable — it stops and says so.
+implement, review, verify, open a PR, hand back — and it never merges. It composes with Superpowers
+where that is installed and falls back to plain instructions where it is not, as
+[above](#better-with-superpowers). Either way it refuses to fall back to raw `gh` commands to read
+or write the board if the armature tools are unavailable — it stops and says so.
 
 ## License
 
