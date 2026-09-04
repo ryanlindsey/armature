@@ -7,12 +7,6 @@ deferred deliberately — none of it is a known correctness defect in shipped co
 
 ## Work to do
 
-**A release workflow.** `release-please-config.json` is correct and its `extra-files` covers
-`.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` and `server/version.ts` — but no
-workflow invokes release-please, so nothing has ever run it. One extra constraint when wiring it
-up: `dist/server.js` inlines `VERSION`, so a release PR must rebuild and commit the bundle or the
-"bundle is current" CI step fails on the release commit itself.
-
 **`item_create` cannot link a parent.** v1 removed the parameter rather than ship one that was
 resolved and then silently discarded; the spec carries a dated amendment explaining why. Adding it
 back means an `addSubIssue` mutation plus read-back verification of the link, in the same shape as
@@ -43,6 +37,11 @@ Code is correct in all four; only the tests are missing or misplaced.
 
 ## Deferred, worth doing eventually
 
+- **The release PR gets no checks.** `.github/workflows/release.yml` runs release-please under the
+  default `GITHUB_TOKEN`, and pull requests it opens do not trigger `pull_request` workflows — so
+  `ci.yml` never runs against a release PR. The workflow's `bundle` job typechecks and tests the
+  bumped tree to compensate, but those runs are not attached to the PR. A fine-grained PAT in a
+  secret would restore real checks at the cost of a token to rotate.
 - **Typed GraphQL responses.** `client.graphql<any>` is used throughout `board.ts`, `items.ts`,
   `aliases.ts` and `config-io.ts` — a whole-codebase choice rather than a local lapse, and worth
   one typed pass.

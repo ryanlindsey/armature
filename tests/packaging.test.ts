@@ -37,10 +37,6 @@ describe('packaging', () => {
 // and the manifest by default. Without extra-files a release would move package.json and leave
 // the other three behind — failing the very first test in this file, and shipping a bundle whose
 // embedded VERSION disagrees with the plugin a user installed.
-//
-// NOTE for whoever adds the release workflow (recorded as a follow-up; there is none yet):
-// dist/server.js inlines VERSION, so a release PR that bumps server/version.ts must also run
-// `npm run build` and commit the bundle, or CI's "bundle is current" step fails on the release PR.
 describe('release-please updates every file the version check pins together', () => {
   const config = read('release-please-config.json')
   const extraFiles: unknown[] = config.packages['.']['extra-files'] ?? []
@@ -75,6 +71,58 @@ describe('release-please updates every file the version check pins together', ()
 
   it('marks the version line in server/version.ts for the generic updater', () => {
     expect(readText('server/version.ts')).toContain('x-release-please-version')
+  })
+})
+
+// extra-files covers server/version.ts, but not the bundle built from it: esbuild inlines VERSION
+// as a bare literal and strips the annotation comment, so there is no marker left for a `generic`
+// updater to find. Only a rebuild closes that gap. Without one the release PR carries a bundle
+// reporting the previous version, and CI's "bundle is current" step fails on the release commit
+// itself — the one commit that must be green.
+describe('the release workflow rebuilds the bundle release-please cannot patch', () => {
+  const release = readText('.github/workflows/release.yml')
+
+  it('runs release-please', () => {
+    expect(release).toMatch(/googleapis\/release-please-action@v\d/)
+  })
+
+  // Named explicitly rather than left to the action's defaults, so renaming either file breaks a
+  // test here instead of silently orphaning the workflow from the config it is supposed to read.
+  it('points release-please at the config and manifest this repo has', () => {
+    expect(release).toContain('release-please-config.json')
+    expect(release).toContain('.release-please-manifest.json')
+  })
+
+  // The repository's default workflow token is read-only, so a workflow that does not ask for
+  // these fails at run time with a permissions error rather than at review time.
+  it('grants the write permissions the default token does not carry', () => {
+    expect(release).toMatch(/contents:\s*write/)
+    expect(release).toMatch(/pull-requests:\s*write/)
+  })
+
+  it('rebuilds the bundle and commits it', () => {
+    expect(release).toContain('npm run build')
+    expect(release).toMatch(/git add .*dist\/server\.js/)
+  })
+
+  // The rebuild belongs on the release branch. Pushing it straight to main would leave the release
+  // PR still stale and put an unreviewed commit on the branch the tag is cut from.
+  it('commits onto the release branch rather than main', () => {
+    expect(release).toContain('headBranchName')
+  })
+
+  // The release PR gets no pull_request checks -- PRs opened by GITHUB_TOKEN do not trigger
+  // workflows — so this job is the only signal before the merge that cuts the tag.
+  it('typechecks and tests the bumped tree, since nothing else will', () => {
+    expect(release).toContain('npm run typecheck')
+    expect(release).toContain('npm test')
+  })
+
+  // The rebuild is only worth doing because CI enforces that the bundle matches its source. If
+  // that check ever goes, revisit this job rather than leaving it running for a reason that no
+  // longer holds.
+  it('serves a check CI still makes', () => {
+    expect(readText('.github/workflows/ci.yml')).toContain('git diff --exit-code dist/server.js')
   })
 })
 
