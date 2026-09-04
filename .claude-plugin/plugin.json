@@ -1,0 +1,14 @@
+{
+  "name": "armature",
+  "version": "0.1.0",
+  "description": "Drive epics and tickets across many repositories from one project board, over a typed MCP tool surface.",
+  "author": { "name": "Ryan Lindsey" },
+  "repository": "https://github.com/ryanlindsey/armature",
+  "license": "MIT",
+  "keywords": ["project-management", "issues", "epics", "multi-repo", "github-projects", "mcp"],
+  "commands": "./commands/",
+  "skills": "./skills/",
+  "mcpServers": {
+    "armature": { "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server.js"] }
+  }
+}

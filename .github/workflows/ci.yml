@@ -12,10 +12,18 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      - name: bundle is current
+        run: |
+          npm run build
+          git diff --exit-code dist/server.js
   integration:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    # Runs only on push, and only when the scratch-board variables are configured. Without this
+    # second condition an unconfigured repo's job would still run, hit the in-suite
+    # describe.skipIf guard, execute zero tests, and report green — a passing signal that means
+    # nothing. Skipping the job outright instead makes that state visible in the Actions UI
+    # rather than indistinguishable from a real pass.
+    if: github.event_name == 'push' && vars.ARMATURE_IT_OWNER != '' && vars.ARMATURE_IT_BOARD != ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
