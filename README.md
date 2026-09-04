@@ -38,7 +38,11 @@ in-body convention to declare it.
 
 Armature borrows a credential rather than asking for one of its own: it tries `gh auth token`
 first, then the `GITHUB_TOKEN` and `GH_TOKEN` environment variables, in that order. Whichever it
-finds needs the `repo` and `project` scopes to read and write issues and board items.
+finds needs the `repo` and `project` scopes to read and write issues and board items — which
+means a **classic** token. A fine-grained personal access token cannot reach a board owned by a
+user account at any permission level: GitHub offers no account-level Projects permission for one,
+and the API answers `Resource not accessible by personal access token`. A board owned by an
+organization is reachable with a fine-grained token's organization Projects permission.
 
 ## Try it against a real board safely
 

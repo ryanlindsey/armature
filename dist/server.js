@@ -16747,7 +16747,7 @@ var run = promisify(execFile);
 var MissingCredentialError = class extends Error {
   constructor() {
     super(
-      "No GitHub credential available. Armature reads one from the GitHub CLI first, then GITHUB_TOKEN, then GH_TOKEN. Run `gh auth login`, or export one of those variables. The credential needs the `repo` and `project` scopes."
+      "No GitHub credential available. Armature reads one from the GitHub CLI first, then GITHUB_TOKEN, then GH_TOKEN. Run `gh auth login`, or export one of those variables. The credential needs the `repo` and `project` scopes, so it must be a classic token: a fine-grained one cannot reach a user-owned board at any permission level."
     );
     this.name = "MissingCredentialError";
   }
