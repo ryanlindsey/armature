@@ -7195,6 +7195,7 @@ var require_dist = __commonJS({
 });
 
 // server/index.ts
+import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // node_modules/zod/v4/core/util.js
@@ -17298,17 +17299,47 @@ var GitHubBoardProvider = class {
     this.cached ??= await surveyBoard(this.client, this.board);
     return this.cached;
   }
+  /**
+   * Dropped after every write. BoardSnapshot mixes two kinds of fact: the stable derived ones
+   * (field identifiers, status options, status semantics) and `items`, which carries a live
+   * status per item. Because they share one object, a snapshot cached across a write left
+   * `board_next` returning the item it had just claimed and `board_survey` describing a board
+   * that no longer existed.
+   *
+   * Invalidated in a `finally`, not only on success: OrphanedIssueError and
+   * UnverifiedWriteError both report a write whose effect on the board is exactly what is in
+   * doubt, so those are the last cases in which a cached view should be trusted. A dropped
+   * cache costs one survey; a stale one costs a wrong answer delivered confidently.
+   */
+  invalidate() {
+    this.cached = null;
+  }
   async getItem(ref) {
     return getItem(this.client, this.board, ref);
   }
   async claim(ref) {
-    return claim2(this.client, this.board, await this.survey(), ref, { dryRun: this.dryRun });
+    const snapshot = await this.survey();
+    try {
+      return await claim2(this.client, this.board, snapshot, ref, { dryRun: this.dryRun });
+    } finally {
+      this.invalidate();
+    }
   }
   async setStatus(ref, status) {
-    return setStatus(this.client, this.board, await this.survey(), ref, status, { dryRun: this.dryRun });
+    const snapshot = await this.survey();
+    try {
+      return await setStatus(this.client, this.board, snapshot, ref, status, { dryRun: this.dryRun });
+    } finally {
+      this.invalidate();
+    }
   }
   async create(input) {
-    return createItem(this.client, this.board, await this.survey(), input, { dryRun: this.dryRun });
+    const snapshot = await this.survey();
+    try {
+      return await createItem(this.client, this.board, snapshot, input, { dryRun: this.dryRun });
+    } finally {
+      this.invalidate();
+    }
   }
 };
 
@@ -17622,8 +17653,15 @@ async function main() {
   });
   await server.connect(new StdioServerTransport());
 }
-var isEntryPoint = process.argv[1] !== void 0 && fileURLToPath(import.meta.url) === process.argv[1];
-if (isEntryPoint) {
+function isEntryPoint(moduleUrl, argv1) {
+  if (argv1 === void 0) return false;
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argv1);
+  } catch {
+    return false;
+  }
+}
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   main().catch((error2) => {
     process.stderr.write(`${error2 instanceof Error ? error2.message : String(error2)}
 `);
@@ -17634,5 +17672,6 @@ export {
   TOOLS,
   UnsupportedParentError,
   dispatch,
+  isEntryPoint,
   makeRefResolver
 };

@@ -20,19 +20,50 @@ export class GitHubBoardProvider implements BoardProvider {
     return this.cached
   }
 
+  /**
+   * Dropped after every write. BoardSnapshot mixes two kinds of fact: the stable derived ones
+   * (field identifiers, status options, status semantics) and `items`, which carries a live
+   * status per item. Because they share one object, a snapshot cached across a write left
+   * `board_next` returning the item it had just claimed and `board_survey` describing a board
+   * that no longer existed.
+   *
+   * Invalidated in a `finally`, not only on success: OrphanedIssueError and
+   * UnverifiedWriteError both report a write whose effect on the board is exactly what is in
+   * doubt, so those are the last cases in which a cached view should be trusted. A dropped
+   * cache costs one survey; a stale one costs a wrong answer delivered confidently.
+   */
+  private invalidate(): void {
+    this.cached = null
+  }
+
   async getItem(ref: WorkItemRef): Promise<BoardItem> {
     return getItem(this.client, this.board, ref)
   }
 
   async claim(ref: WorkItemRef): Promise<BoardItem> {
-    return claim(this.client, this.board, await this.survey(), ref, { dryRun: this.dryRun })
+    const snapshot = await this.survey()
+    try {
+      return await claim(this.client, this.board, snapshot, ref, { dryRun: this.dryRun })
+    } finally {
+      this.invalidate()
+    }
   }
 
   async setStatus(ref: WorkItemRef, status: string): Promise<BoardItem> {
-    return setStatus(this.client, this.board, await this.survey(), ref, status, { dryRun: this.dryRun })
+    const snapshot = await this.survey()
+    try {
+      return await setStatus(this.client, this.board, snapshot, ref, status, { dryRun: this.dryRun })
+    } finally {
+      this.invalidate()
+    }
   }
 
   async create(input: CreateInput): Promise<BoardItem> {
-    return createItem(this.client, this.board, await this.survey(), input, { dryRun: this.dryRun })
+    const snapshot = await this.survey()
+    try {
+      return await createItem(this.client, this.board, snapshot, input, { dryRun: this.dryRun })
+    } finally {
+      this.invalidate()
+    }
   }
 }

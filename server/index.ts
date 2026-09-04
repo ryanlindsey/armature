@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -317,13 +318,31 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport())
 }
 
+/**
+ * Whether this module is the program being run, rather than one imported by something else.
+ *
+ * Compared as real paths on both sides. Node resolves `import.meta.url` through symlinks, while
+ * `process.argv[1]` is whatever path the launcher was invoked with — so a plugin started through
+ * a symlinked `dist/server.js` compared a resolved path to an unresolved one, found them
+ * unequal, ran nothing, and exited 0 with no output. A silent no-op is the worst possible
+ * failure for an MCP server: the client reports a server that connected and offers no tools.
+ *
+ * Never throws: this runs at import time, and `argv[1]` naming nothing on disk must leave the
+ * module importable.
+ */
+export function isEntryPoint(moduleUrl: string, argv1: string | undefined): boolean {
+  if (argv1 === undefined) return false
+  try {
+    return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argv1)
+  } catch {
+    return false
+  }
+}
+
 // Guarded so importing this module (as tests do, to exercise `dispatch`) never starts a real
 // server, spawns `gh`, or hits the network — only running `node dist/server.js` (or this file)
 // directly does.
-const isEntryPoint =
-  process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1]
-
-if (isEntryPoint) {
+if (isEntryPoint(import.meta.url, process.argv[1])) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     process.exit(1)
