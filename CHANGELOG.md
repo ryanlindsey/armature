@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ryanlindsey/armature/compare/armature-v0.2.2...armature-v0.3.0) (2026-09-04)
+
+
+### Features
+
+* compose the full Superpowers chain and surface it in the README ([#16](https://github.com/ryanlindsey/armature/issues/16)) ([8e4d97e](https://github.com/ryanlindsey/armature/commit/8e4d97e26ab5e71112a752c891f3e5a039327eba))
+
 ## [0.2.2](https://github.com/ryanlindsey/armature/compare/armature-v0.2.1...armature-v0.2.2) (2026-09-04)
 
 
