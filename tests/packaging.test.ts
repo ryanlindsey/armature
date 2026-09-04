@@ -102,7 +102,10 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
   // checked from in here; they are documented at the top of the workflow.
   it('mints an app token and hands it to both consumers', () => {
     expect(release).toMatch(/actions\/create-github-app-token@v\d/)
-    expect(release).toMatch(/app-id:\s*\$\{\{\s*secrets\.BOT_APP_ID\s*\}\}/)
+    expect(release).toMatch(/client-id:\s*\$\{\{\s*secrets\.BOT_APP_CLIENT_ID\s*\}\}/)
+    // The deprecated input, not merely absent from the assertions above: passing it still works
+    // and still warns, so nothing else would notice a revert.
+    expect(release, 'app-id is deprecated in favour of client-id').not.toMatch(/^\s*app-id:/m)
     expect(release).toMatch(/private-key:\s*\$\{\{\s*secrets\.BOT_APP_PRIVATE_KEY\s*\}\}/)
     expect(release.match(/steps\.app-token\.outputs\.token/g)).toHaveLength(2)
   })

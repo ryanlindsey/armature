@@ -21,10 +21,14 @@ jobs:
       # Each job mints its own installation token instead of one job minting and passing it on.
       # Job outputs are not masked, so a token handed between jobs is written into the run in
       # plain text; minted in place it stays a redacted secret in the log.
+      #
+      # `client-id`, not `app-id`: v3 of the action deprecates the numeric App ID in favour of the
+      # app's Client ID, and warns on every run that still passes it. They are different values on
+      # the same settings page and neither is secret, but a swap between them fails at mint time.
       - uses: actions/create-github-app-token@v3
         id: app-token
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v4
         id: release
@@ -51,7 +55,7 @@ jobs:
       - uses: actions/create-github-app-token@v3
         id: app-token
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v4
         with:
