@@ -139,6 +139,11 @@ out
 # Superpowers task tracking
 .superpowers/
 
+# Claude Code worktrees, created per issue and local to one machine.
+# Scoped rather than ignoring .claude/ outright, so shared project config
+# (settings.json, commands, skills) can still be committed there.
+.claude/worktrees/
+
 # Vite files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
