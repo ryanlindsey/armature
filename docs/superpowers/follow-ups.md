@@ -37,11 +37,6 @@ Code is correct in all four; only the tests are missing or misplaced.
 
 ## Deferred, worth doing eventually
 
-- **The release PR gets no checks.** `.github/workflows/release.yml` runs release-please under the
-  default `GITHUB_TOKEN`, and pull requests it opens do not trigger `pull_request` workflows — so
-  `ci.yml` never runs against a release PR. The workflow's `bundle` job typechecks and tests the
-  bumped tree to compensate, but those runs are not attached to the PR. A fine-grained PAT in a
-  secret would restore real checks at the cost of a token to rotate.
 - **Typed GraphQL responses.** `client.graphql<any>` is used throughout `board.ts`, `items.ts`,
   `aliases.ts` and `config-io.ts` — a whole-codebase choice rather than a local lapse, and worth
   one typed pass.

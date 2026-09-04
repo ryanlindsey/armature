@@ -93,14 +93,31 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
     expect(release).toContain('.release-please-manifest.json')
   })
 
-  // The repository's default workflow token is read-only, so a workflow that does not ask for
-  // these fails at run time with a permissions error rather than at review time. `issues` is the
-  // easy one to omit: release-please needs it to create and apply its `autorelease:` labels, and
-  // the action documents it alongside the other two.
-  it('grants the write permissions the default token does not carry', () => {
-    expect(release).toMatch(/contents:\s*write/)
-    expect(release).toMatch(/pull-requests:\s*write/)
-    expect(release).toMatch(/issues:\s*write/)
+  // Authority comes from the ryanlindsey-bot app installation now, not from the workflow token.
+  // That moves the easy-to-omit thing rather than removing it: a step that is not handed the
+  // minted token falls back to a GITHUB_TOKEN granted nothing, which fails at run time rather
+  // than at review time — the same trap the old per-job `permissions:` block set. So both
+  // consumers are asserted: release-please, and the checkout whose stored credential does the
+  // push. The app's own installation permissions (contents, pull-requests, issues) cannot be
+  // checked from in here; they are documented at the top of the workflow.
+  it('mints an app token and hands it to both consumers', () => {
+    expect(release).toMatch(/actions\/create-github-app-token@v\d/)
+    expect(release).toMatch(/app-id:\s*\$\{\{\s*secrets\.BOT_APP_ID\s*\}\}/)
+    expect(release).toMatch(/private-key:\s*\$\{\{\s*secrets\.BOT_APP_PRIVATE_KEY\s*\}\}/)
+    expect(release.match(/steps\.app-token\.outputs\.token/g)).toHaveLength(2)
+  })
+
+  // A token routed from one job to another through `outputs:` is written into the run unmasked,
+  // so each job mints its own from the same secrets.
+  it('mints the token in each job rather than routing it through job outputs', () => {
+    expect(release.match(/actions\/create-github-app-token@v\d/g)).toHaveLength(2)
+  })
+
+  // The counterpart to the above: nothing is left leaning on the workflow token, so a dropped
+  // `token:` cannot quietly half-work on inherited permissions.
+  it('leaves the workflow token with nothing granted', () => {
+    expect(release).toMatch(/^permissions:\s*\{\}\s*$/m)
+    expect(release).not.toMatch(/contents:\s*write/)
   })
 
   it('rebuilds the bundle and commits it', () => {
@@ -117,9 +134,11 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
     expect(release).toMatch(/git push origin ["']?HEAD:/)
   })
 
-  // The release PR gets no pull_request checks -- PRs opened by GITHUB_TOKEN do not trigger
-  // workflows — so this job is the only signal before the merge that cuts the tag.
-  it('typechecks and tests the bumped tree, since nothing else will', () => {
+  // A PR opened by the app does trigger `pull_request`, so ci.yml now runs against the release PR
+  // — it did not under GITHUB_TOKEN, when this job was the only signal before the merge that cuts
+  // the tag. These steps stay as the gate on this job's own push, so a failing tree never gets a
+  // rebuilt bundle committed on top of it.
+  it('typechecks and tests the bumped tree before pushing to it', () => {
     expect(release).toContain('npm run typecheck')
     expect(release).toContain('npm test')
   })
