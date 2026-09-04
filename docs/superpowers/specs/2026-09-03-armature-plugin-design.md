@@ -121,8 +121,21 @@ adapters implement this surface instead of forking it.
 | `item_get` | `ref` | body, status, board fields, parent epic with its repository, sub-issues |
 | `item_claim` | `ref` | transition to the claimed status; returns the observed post-state |
 | `item_status` | `ref`, `status` | any transition, read-after-write verified |
-| `item_create` | `repo`, `title`, `body`, `parent?` | issue, board membership, and fields together |
+| `item_create` | `repo`, `title`, `body` | issue and board membership together |
 | `board_survey` | `filter?` | normalized snapshot of the whole board |
+
+**Amended 2026-09-03, after the whole-branch review: `item_create` no longer takes `parent`, and
+no longer claims to set fields.** As first built it accepted a parent, resolved it through the
+alias resolver, and discarded it — no `addSubIssue` mutation was ever issued — while the dry run
+reported the epic attached and a `Todo` status the real path never set. That is this document's
+own thesis violated in a write path: an advertised effect that does not happen, reported as
+success, with `ARMATURE_DRY_RUN` delivering the false confirmation.
+
+Implementing it properly means a new mutation, read-back verification of the link, and an
+API-availability question, so v1 removes the parameter rather than shipping a promise it does not
+keep. Supplying `parent` now fails loudly saying sub-issue linking is unsupported and the parent
+must be set on the issue afterwards. Sub-project 2 needs parent linking for cross-repo fan-out and
+builds it there, with its own tests.
 
 ### The `ref` type
 
