@@ -60,8 +60,11 @@ function makeClient() {
         }
       }
       // The board head query, fetched for the project metadata before collectAll pages it.
+      // Rooted at repositoryOwner, as BOARD_QUERY is: the board's owner may be a user account,
+      // and `organization(login:)` answers a personal account with a NOT_FOUND error.
       return {
-        organization: {
+        repositoryOwner: {
+          __typename: 'User',
           projectV2: {
             id: 'PVT_1',
             field: { id: 'F_1', options: OPTIONS },

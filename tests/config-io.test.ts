@@ -8,6 +8,7 @@ import { ConfigError } from '../server/config.js'
 import type { GitHubClient } from '../server/providers/github/client.js'
 import {
   boardsContainingRepo,
+  REPO_BOARDS_QUERY,
   loadResolvedConfig,
   readOriginUrl,
   readRepoConfig,
@@ -104,7 +105,7 @@ describe('readOriginUrl', () => {
 
 describe('boardsContainingRepo', () => {
   it('returns an empty list when no client is available yet', async () => {
-    expect(await boardsContainingRepo(undefined, { owner: 'acme', name: 'web' })).toEqual([])
+    expect(await boardsContainingRepo(undefined, { owner: 'acme', name: 'web' })).toEqual({ boards: [] })
   })
 
   it('maps linked projects to board references', async () => {
@@ -118,24 +119,64 @@ describe('boardsContainingRepo', () => {
         },
       },
     }))
-    expect(await boardsContainingRepo(client, { owner: 'acme', name: 'web' })).toEqual([
-      { provider: 'github', owner: 'acme', number: 6 },
-      { provider: 'github', owner: 'acme', number: 9 },
-    ])
-  })
-
-  it('returns an empty list when the query errors', async () => {
-    const client = fakeClient(async () => {
-      throw new Error('boom')
+    expect(await boardsContainingRepo(client, { owner: 'acme', name: 'web' })).toEqual({
+      boards: [
+        { provider: 'github', owner: 'acme', number: 6 },
+        { provider: 'github', owner: 'acme', number: 9 },
+      ],
     })
-    expect(await boardsContainingRepo(client, { owner: 'acme', name: 'web' })).toEqual([])
   })
 
-  it('never lets a query error escape', async () => {
+  // -------------------------------------------------------------------------------------------
+  // Why the shipped derivation never worked.
+  //
+  // REPO_BOARDS_QUERY selected `owner{ login }` directly on ProjectV2Owner, which is an
+  // interface carrying no `login` field, so GitHub rejected the whole document with
+  // `undefinedField`. Every call landed in the catch below and returned an empty list, which
+  // resolveConfig reported as "No board found" — a sentence about the user's board setup that
+  // was really about a malformed query. Zero-config derivation could not have worked in any
+  // repository, and the error said nothing that would lead anyone to the cause.
+  //
+  // The query is fixed, and the swallow is no longer silent: a failure is carried out as
+  // `problem` so the eventual error can say the derivation itself broke.
+  // -------------------------------------------------------------------------------------------
+
+  it('selects the owner login through type-conditional fragments', () => {
+    // ProjectV2Owner has no `login` of its own; only User and Organization do.
+    expect(REPO_BOARDS_QUERY).not.toMatch(/owner\s*{\s*login\s*}/)
+    expect(REPO_BOARDS_QUERY).toMatch(/\.\.\.\s*on\s+User\s*{\s*login\s*}/)
+    expect(REPO_BOARDS_QUERY).toMatch(/\.\.\.\s*on\s+Organization\s*{\s*login\s*}/)
+  })
+
+  it('reads an owner login delivered through an inline fragment', async () => {
+    const client = fakeClient(async () => ({
+      repository: {
+        projectsV2: {
+          nodes: [{ number: 1, owner: { __typename: 'User', login: 'ryanlindsey' } }],
+        },
+      },
+    }))
+    const found = await boardsContainingRepo(client, { owner: 'ryanlindsey', name: 'armature' })
+    expect(found.boards).toEqual([{ provider: 'github', owner: 'ryanlindsey', number: 1 }])
+    expect(found.problem).toBeUndefined()
+  })
+
+  it('reports why the lookup failed instead of reporting no boards', async () => {
+    const client = fakeClient(async () => {
+      throw new Error("Field 'login' doesn't exist on type 'ProjectV2Owner'")
+    })
+    const found = await boardsContainingRepo(client, { owner: 'acme', name: 'web' })
+    expect(found.boards).toEqual([])
+    expect(found.problem).toMatch(/ProjectV2Owner/)
+  })
+
+  it('still never lets a query error escape', async () => {
     const client = fakeClient(async () => {
       throw new Error('network down')
     })
-    await expect(boardsContainingRepo(client, { owner: 'acme', name: 'web' })).resolves.toEqual([])
+    await expect(
+      boardsContainingRepo(client, { owner: 'acme', name: 'web' }),
+    ).resolves.toMatchObject({ boards: [] })
   })
 })
 
@@ -271,5 +312,31 @@ describe('loadResolvedConfig', () => {
     await expect(loadResolvedConfig({ cwd: repoDir, home: homeDir, env: {} })).rejects.toThrow(
       /\.armature\.json/,
     )
+  })
+})
+
+describe('a board derivation that fails rather than finding nothing', () => {
+  it('says the lookup broke, instead of blaming the board setup alone', async () => {
+    const repoDir = await mkTemp()
+    const homeDir = await mkTemp()
+    dirs.push(repoDir, homeDir)
+    await run('git', ['init'], { cwd: repoDir })
+    await run('git', ['remote', 'add', 'origin', 'git@github.com:acme/web.git'], { cwd: repoDir })
+    const client = fakeClient(async () => {
+      throw new Error("Field 'login' doesn't exist on type 'ProjectV2Owner'")
+    })
+
+    const error = await loadResolvedConfig({
+      cwd: repoDir,
+      home: homeDir,
+      env: {},
+      client,
+    }).catch((e: Error) => e)
+
+    expect(error).toBeInstanceOf(ConfigError)
+    // Still names the fix the user can apply...
+    expect((error as Error).message).toMatch(/No board found for acme\/web/)
+    // ...but no longer hides the fact that armature never got an answer to ask about.
+    expect((error as Error).message).toMatch(/ProjectV2Owner/)
   })
 })

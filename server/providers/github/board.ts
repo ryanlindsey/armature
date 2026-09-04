@@ -45,24 +45,37 @@ export function inferStatusSemantics(optionNames: string[]): StatusSemantics {
   return { todo, claimed, review, done }
 }
 
-const BOARD_QUERY = `
+// Rooted at `repositoryOwner`, not `organization`.
+//
+// GitHub answers `organization(login:)` for a personal account with
+// `{"data":{"organization":null},"errors":[{"type":"NOT_FOUND",...}]}`, and GitHubClient refuses
+// any payload carrying errors — so a user-owned board did not read as "not found", it failed
+// with "Could not resolve to an Organization with the login of 'ryanlindsey'", naming a kind of
+// account the user never claimed to have. `repositoryOwner` resolves either account type in a
+// single request and returns no error for the shape it isn't.
+//
+// The projection is a named fragment so the two branches cannot drift apart; fragments may use
+// the operation's variables, so `$cursor` still reaches `items`.
+export const BOARD_QUERY = `
 query($owner:String!,$number:Int!,$cursor:String){
-  organization(login:$owner){
-    projectV2(number:$number){
+  repositoryOwner(login:$owner){
+    ... on User { projectV2(number:$number){ ...boardFields } }
+    ... on Organization { projectV2(number:$number){ ...boardFields } }
+  }
+}
+fragment boardFields on ProjectV2 {
+  id
+  field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } }
+  items(first:100, after:$cursor){
+    pageInfo{ hasNextPage endCursor }
+    nodes{
       id
-      field(name:"Status"){ ... on ProjectV2SingleSelectField { id options { id name } } }
-      items(first:100, after:$cursor){
-        pageInfo{ hasNextPage endCursor }
-        nodes{
-          id
-          fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } }
-          content{
-            ... on Issue {
-              number title state
-              repository{ owner{ login } name }
-              parent{ number repository{ owner{ login } name } }
-            }
-          }
+      fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      content{
+        ... on Issue {
+          number title state
+          repository{ owner{ login } name }
+          parent{ number repository{ owner{ login } name } }
         }
       }
     }
@@ -78,7 +91,7 @@ export async function surveyBoard(
   boardSource: BoardSource,
 ): Promise<BoardSnapshot> {
   const head = await client.graphql<any>(BOARD_QUERY, { owner: board.owner, number: board.number, cursor: null })
-  const project = head.organization?.projectV2
+  const project = head.repositoryOwner?.projectV2
   if (!project) throw new Error(`No project ${board.owner}/${board.number} is visible to this credential.`)
 
   // The first page is deliberately fetched twice — once here for the project metadata, and again
@@ -88,7 +101,7 @@ export async function surveyBoard(
   const raw = await client.collectAll<any>(
     BOARD_QUERY,
     { owner: board.owner, number: board.number },
-    (d) => d.organization.projectV2.items,
+    (d) => d.repositoryOwner.projectV2.items,
   )
 
   const items: BoardItem[] = raw

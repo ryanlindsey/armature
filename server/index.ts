@@ -373,7 +373,33 @@ export async function dispatch(
   }
 }
 
-async function main(): Promise<void> {
+/** The provider and ref resolver a tool call needs, built together from resolved config. */
+export type Services = { provider: BoardProvider; resolveRef: RefResolver }
+
+/**
+ * Defers building the services until a tool is actually called, and memoises the result.
+ *
+ * `main()` used to resolve a credential and a board before `server.connect()`, which made a
+ * working configuration a precondition of the process starting at all. A freshly installed
+ * plugin has no board by definition, so the first run in any repository threw ConfigError,
+ * printed it to a stderr the MCP client discards, and exited 1 — surfacing as "✘ failed" with
+ * no reachable explanation. The transport now connects first and this runs on demand, so the
+ * same error arrives as a tool result the caller can read and act on.
+ *
+ * The `??= await` idiom is deliberate and matches makeRefResolver above: a rejected build
+ * throws before the assignment completes, leaving `cached` null, so a caller who fixes
+ * .armature.json is served by the next call instead of replaying the first failure forever.
+ */
+export function makeServiceLoader(build: () => Promise<Services>): () => Promise<Services> {
+  let cached: Services | null = null
+  return async () => {
+    cached ??= await build()
+    // Non-null for the reason spelled out above: a rejection never reaches this line.
+    return cached!
+  }
+}
+
+async function buildServices(): Promise<Services> {
   const credential = await resolveCredential({ readCliToken: readCliTokenFromGh, env: process.env })
   const client = new GitHubClient(credential)
   const config = await loadResolvedConfig({ env: process.env, client })
@@ -389,20 +415,29 @@ async function main(): Promise<void> {
   // Built once and closed over for the same reason: makeRefResolver caches the alias map
   // internally after its first build, and a fresh resolver per call would throw that cache away
   // and re-read every sibling's .armature.json on every tool invocation.
-  const refResolver = makeRefResolver(provider, readSiblingConfigFrom(client))
+  return { provider, resolveRef: makeRefResolver(provider, readSiblingConfigFrom(client)) }
+}
 
+async function main(): Promise<void> {
   const server = new Server(
     { name: 'armature', version: VERSION },
     { capabilities: { tools: {} } },
   )
 
+  const services = makeServiceLoader(buildServices)
+
+  // Answered from the constant above, so a server that cannot reach its board still describes
+  // what it offers rather than appearing empty.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = (request.params.arguments ?? {}) as Record<string, unknown>
-    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef: refResolver })
+    const { provider, resolveRef } = await services()
+    return dispatch(provider, request.params.name, args, { dryRun: DRY_RUN, resolveRef })
   })
 
+  // Nothing above this line talks to git, GitHub or the filesystem: the handshake must not be
+  // hostage to configuration. See makeServiceLoader.
   await server.connect(new StdioServerTransport())
 }
 
