@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/ryanlindsey/armature/compare/armature-v0.3.3...armature-v0.3.4) (2026-09-04)
+
+
+### Bug Fixes
+
+* let release-please bump the bundle instead of rebuilding it ([#25](https://github.com/ryanlindsey/armature/issues/25)) ([1436954](https://github.com/ryanlindsey/armature/commit/1436954536283ae772b8ddb50bf66cb56d8bc058))
+
 ## [0.3.3](https://github.com/ryanlindsey/armature/compare/armature-v0.3.2...armature-v0.3.3) (2026-09-04)
 
 
