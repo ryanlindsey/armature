@@ -109,9 +109,12 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
   })
 
   // The rebuild belongs on the release branch. Pushing it straight to main would leave the release
-  // PR still stale and put an unreviewed commit on the branch the tag is cut from.
-  it('commits onto the release branch rather than main', () => {
+  // PR still stale and put an unreviewed commit on the branch the tag is cut from. The refspec is
+  // spelled out rather than left to a bare `git push`, which would depend on checkout having set
+  // upstream tracking — and would fail at release time, the worst moment to find out.
+  it('pushes onto the release branch rather than main', () => {
     expect(release).toContain('headBranchName')
+    expect(release).toMatch(/git push origin ["']?HEAD:/)
   })
 
   // The release PR gets no pull_request checks -- PRs opened by GITHUB_TOKEN do not trigger

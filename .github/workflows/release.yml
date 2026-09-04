@@ -54,6 +54,10 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: commit the rebuilt bundle
+        # The branch reaches the script through the environment rather than by interpolation, so a
+        # branch name is never spliced into the shell.
+        env:
+          BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
         run: |
           if git diff --quiet -- dist/server.js; then
             echo 'bundle already current'
@@ -63,4 +67,4 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add dist/server.js
           git commit -m 'chore: rebuild dist/server.js for the release'
-          git push
+          git push origin "HEAD:$BRANCH"
