@@ -9,7 +9,7 @@ import { BareRefError, formatRef, parseRef } from './ref.js'
 import type { WorkItemRef } from './ref.js'
 import { GitHubClient } from './providers/github/client.js'
 import { GitHubBoardProvider } from './providers/github/provider.js'
-import { buildAliasMap, readSiblingConfigFrom, resolveAlias } from './providers/github/aliases.js'
+import { ALIAS_REF, buildAliasMap, readSiblingConfigFrom, resolveAlias } from './providers/github/aliases.js'
 import type { AliasMap, SiblingConfigReader } from './providers/github/aliases.js'
 import { selectNext } from './providers/github/next.js'
 import type { BoardProvider } from './providers/types.js'
@@ -102,23 +102,25 @@ function presentCreated<T extends { ref: unknown }>(created: T, dryRun: boolean)
 
 export type RefResolver = (token: string) => Promise<WorkItemRef>
 
-// Matches the shape resolveAlias expects — a single alias token, no slash, before "#number" —
-// without needing the alias map built yet. That lets a genuine bare number ("278" or "#278")
-// keep raising BareRefError immediately: it can never resolve, aliased or not, so there is no
-// reason to pay for a map build just to refuse it the same way parseRef already does.
-const ALIAS_SHAPE = /^([A-Za-z0-9._-]+)#\d+$/
-
 // Wraps parseRef with a fallback through the alias map: a token parseRef rejects as unqualified
 // is retried as "alias#number" before the error surfaces. Building the map costs one sibling
 // .armature.json read per repository on the board (see aliases.ts), so it must not happen at
-// startup or on every call — `mapPromise` builds it at most once, the first time an alias-shaped
-// token actually appears, and every later lookup (hit or miss) reuses that same cached promise.
+// startup or on every call. `cachedMap` is populated only once a build actually succeeds — the
+// `await` sits to the right of `??=`, so a rejected build leaves `cachedMap` null and the next
+// lookup retries cleanly, rather than replaying a stale failure forever. This mirrors
+// GitHubBoardProvider.survey()'s `this.cached ??= await surveyBoard(...)` in provider.ts. Two
+// concurrent first calls can each start a build; both produce the same map and either result is
+// fine to cache, so no lock guards against that.
 // main() constructs exactly one resolver and closes over it for the life of the process.
 export function makeRefResolver(provider: BoardProvider, read: SiblingConfigReader): RefResolver {
-  let mapPromise: Promise<AliasMap> | null = null
-  const getMap = (): Promise<AliasMap> => {
-    mapPromise ??= provider.survey().then((snapshot) => buildAliasMap(read, snapshot.repositories))
-    return mapPromise
+  let cachedMap: AliasMap | null = null
+  const getMap = async (): Promise<AliasMap> => {
+    cachedMap ??= await provider.survey().then((snapshot) => buildAliasMap(read, snapshot.repositories))
+    // Non-null: the line above either already found a cached map or just assigned one — a
+    // rejection from the assignment's right side throws before this line, leaving cachedMap
+    // untouched (see comment above). TS can't see that guarantee across the await, since getMap
+    // is a closure the exported resolver may re-enter concurrently.
+    return cachedMap!
   }
 
   return async (token: string): Promise<WorkItemRef> => {
@@ -128,7 +130,7 @@ export function makeRefResolver(provider: BoardProvider, read: SiblingConfigRead
       if (!(error instanceof BareRefError)) throw error
 
       const trimmed = token.trim()
-      const shape = ALIAS_SHAPE.exec(trimmed)
+      const shape = ALIAS_REF.exec(trimmed)
       if (!shape) throw error // a bare number, or otherwise not alias-shaped: refuse as before
 
       const map = await getMap()

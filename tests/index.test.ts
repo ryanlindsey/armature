@@ -272,6 +272,25 @@ describe('makeRefResolver', () => {
 
     await expect(resolveRef('apex#272')).rejects.toThrow(AliasConflictError)
   })
+
+  it('retries a failed map build on the next lookup rather than replaying the stale rejection', async () => {
+    const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
+    let shouldFail = true
+    const read = vi.fn(async (owner: string, repo: string) => {
+      if (shouldFail) throw new Error('transient network error')
+      return siblingReader({ 'acme/site.example': { alias: 'apex' } })(owner, repo)
+    })
+    const resolveRef = makeRefResolver(provider, read)
+
+    await expect(resolveRef('apex#272')).rejects.toThrow('transient network error')
+
+    shouldFail = false
+    await expect(resolveRef('apex#272')).resolves.toEqual({
+      owner: 'acme',
+      repo: 'site.example',
+      number: 272,
+    })
+  })
 })
 
 describe('dispatch: ref resolution', () => {

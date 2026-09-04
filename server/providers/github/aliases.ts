@@ -59,7 +59,11 @@ export async function buildAliasMap(
   return map
 }
 
-const ALIAS_REF = /^([A-Za-z0-9._-]+)#(\d+)$/
+// Exported (only) so the server layer can recognise this same shape without duplicating the
+// pattern — see index.ts's makeRefResolver, which uses it to tell "not alias-shaped, refuse as
+// a bare ref" apart from "alias-shaped but unknown, name the known aliases" before ever building
+// the map. resolveAlias's own signature, behaviour, and wording are unchanged.
+export const ALIAS_REF = /^([A-Za-z0-9._-]+)#(\d+)$/
 
 export function resolveAlias(map: AliasMap, token: string): WorkItemRef | null {
   const match = ALIAS_REF.exec(token.trim())

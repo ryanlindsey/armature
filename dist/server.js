@@ -17494,12 +17494,11 @@ function presentCreated(created, dryRun) {
   const { ref: _omittedDryRunRef, ...rest } = created;
   return { ...rest, dryRun: true };
 }
-var ALIAS_SHAPE = /^([A-Za-z0-9._-]+)#\d+$/;
 function makeRefResolver(provider, read) {
-  let mapPromise = null;
-  const getMap = () => {
-    mapPromise ??= provider.survey().then((snapshot) => buildAliasMap(read, snapshot.repositories));
-    return mapPromise;
+  let cachedMap = null;
+  const getMap = async () => {
+    cachedMap ??= await provider.survey().then((snapshot) => buildAliasMap(read, snapshot.repositories));
+    return cachedMap;
   };
   return async (token) => {
     try {
@@ -17507,7 +17506,7 @@ function makeRefResolver(provider, read) {
     } catch (error2) {
       if (!(error2 instanceof BareRefError)) throw error2;
       const trimmed = token.trim();
-      const shape = ALIAS_SHAPE.exec(trimmed);
+      const shape = ALIAS_REF.exec(trimmed);
       if (!shape) throw error2;
       const map = await getMap();
       const resolved = resolveAlias(map, trimmed);
