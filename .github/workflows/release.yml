@@ -12,6 +12,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # release-please creates and applies its own `autorelease:` labels, which is label writing
+      # on an issue, not on a pull request. Omitting this fails at run time, not at review time.
+      issues: write
     outputs:
       pr: ${{ steps.release.outputs.pr }}
     steps:

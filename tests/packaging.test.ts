@@ -94,10 +94,13 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
   })
 
   // The repository's default workflow token is read-only, so a workflow that does not ask for
-  // these fails at run time with a permissions error rather than at review time.
+  // these fails at run time with a permissions error rather than at review time. `issues` is the
+  // easy one to omit: release-please needs it to create and apply its `autorelease:` labels, and
+  // the action documents it alongside the other two.
   it('grants the write permissions the default token does not carry', () => {
     expect(release).toMatch(/contents:\s*write/)
     expect(release).toMatch(/pull-requests:\s*write/)
+    expect(release).toMatch(/issues:\s*write/)
   })
 
   it('rebuilds the bundle and commits it', () => {
