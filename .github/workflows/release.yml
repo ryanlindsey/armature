@@ -1,0 +1,70 @@
+name: release
+on:
+  push: { branches: [main] }
+
+# The repository's default workflow token is read-only, so every permission this needs is asked
+# for per job rather than inherited.
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      # release-please creates and applies its own `autorelease:` labels, which is label writing
+      # on an issue, not on a pull request. Omitting this fails at run time, not at review time.
+      issues: write
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # release-please bumps server/version.ts through its extra-files, but it cannot touch the bundle
+  # built from it: esbuild inlines VERSION as a bare literal and strips the annotation comment, so
+  # there is no marker left for a `generic` updater to find. Left alone, the release PR carries a
+  # bundle reporting the previous version and CI's "bundle is current" step fails on the release
+  # commit itself. So rebuild it here, on the release branch, before anyone merges.
+  #
+  # A later push to main makes release-please force-push the branch, discarding this commit — but
+  # that same push runs this job again and puts it back, so the branch converges. What does not
+  # self-heal is a push failing here: the PR is then merge-ready with a stale bundle, and the only
+  # warning is this job going red in the Actions tab.
+  bundle:
+    needs: release-please
+    if: needs.release-please.outputs.pr
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      # Pull requests opened by GITHUB_TOKEN do not trigger `pull_request` workflows, so ci.yml
+      # never runs against the release PR. These two steps are the only check the bumped tree gets
+      # before the merge that cuts the tag.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: commit the rebuilt bundle
+        # The branch reaches the script through the environment rather than by interpolation, so a
+        # branch name is never spliced into the shell.
+        env:
+          BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+        run: |
+          if git diff --quiet -- dist/server.js; then
+            echo 'bundle already current'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dist/server.js
+          git commit -m 'chore: rebuild dist/server.js for the release'
+          git push origin "HEAD:$BRANCH"
