@@ -1,3 +1,4 @@
+import type { BoardSource } from '../config.js'
 import type { WorkItemRef } from '../ref.js'
 
 export type BoardItem = {
@@ -16,7 +17,23 @@ export type StatusSemantics = {
   done: string
 }
 
+/**
+ * Which board this snapshot describes, and how armature came to be pointed at it.
+ *
+ * Deliberately tracker-neutral: `name` is the board as a person would say it — "acme/6" for a
+ * GitHub Projects board, a project key elsewhere — because a Jira adapter has no owner and
+ * number to report. `/armature-doctor`'s first line asks for exactly this pair, and without it
+ * the command asked for data no tool exposed.
+ */
+export type BoardIdentity = {
+  provider: string
+  name: string
+  /** Which layer of the config precedence chain supplied the board's identity. */
+  source: BoardSource
+}
+
 export type BoardSnapshot = {
+  board: BoardIdentity
   id: string
   statusFieldId: string
   statusOptions: { id: string; name: string }[]

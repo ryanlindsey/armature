@@ -9,16 +9,30 @@ export type RepoConfig = {
   commit?: { convention: string; types?: string }
 }
 
+/** Which layer of the precedence chain named the board. Reported by `/armature-doctor`. */
+export type BoardSource = 'env' | 'repo' | 'user' | 'derived'
+
 export type ResolvedConfig = {
-  repo: { owner: string; name: string }
+  /**
+   * The repository armature was started in, read from `origin`. Null when there is no origin and
+   * the board was named without needing one — armature does not require a git checkout to work a
+   * board it was told about explicitly.
+   */
+  repo: { owner: string; name: string } | null
   board: BoardRef
   alias?: string
   verify: string[]
-  boardSource: 'env' | 'repo' | 'user' | 'derived'
+  boardSource: BoardSource
 }
 
 export type ResolveInput = {
-  originUrl: string
+  /** The `origin` remote, or null when the repository has none — see `originProblem`. */
+  originUrl: string | null
+  /**
+   * Why `originUrl` is null, when it is. Carried rather than thrown so a missing origin only
+   * becomes an error if the board turns out to need one; surfaced in that error when it does.
+   */
+  originProblem?: string
   repoConfig: RepoConfig
   userConfig: RepoConfig
   env: Record<string, string | undefined>
@@ -69,10 +83,14 @@ function parseEnvBoard(value: string): BoardRef {
 }
 
 export function resolveConfig(input: ResolveInput): ResolvedConfig {
-  const repo = parseOriginUrl(input.originUrl)
+  // Origin names this repository. It does not name the board when ARMATURE_BOARD or a declared
+  // board already does, so its absence is only an error on the paths that need it — deriving a
+  // board from the repository, and saying which repository a failure is about.
+  const repo = input.originUrl === null ? null : parseOriginUrl(input.originUrl)
+  const subject = repo ? `${repo.owner}/${repo.name}` : 'this directory'
 
   let board: BoardRef
-  let boardSource: ResolvedConfig['boardSource']
+  let boardSource: BoardSource
 
   const envBoard = input.env.ARMATURE_BOARD
   if (envBoard) {
@@ -89,13 +107,16 @@ export function resolveConfig(input: ResolveInput): ResolvedConfig {
     boardSource = 'derived'
   } else if (input.boardsContainingRepo.length === 0) {
     throw new ConfigError(
-      `No board found for ${repo.owner}/${repo.name}. Add .armature.json with a "board" key, ` +
-        `or set ARMATURE_BOARD to "github:owner/number".`,
+      `No board found for ${subject}. Add .armature.json with a "board" key, ` +
+        `or set ARMATURE_BOARD to "github:owner/number".` +
+        // Only now does the missing origin matter: without it there was no repository to ask
+        // which boards contain it, which is why nothing could be derived.
+        (input.originProblem ? ` ${input.originProblem}` : ''),
     )
   } else {
     const names = input.boardsContainingRepo.map((b) => `${b.owner}/${b.number}`).join(', ')
     throw new ConfigError(
-      `${repo.owner}/${repo.name} appears on several boards (${names}). ` +
+      `${subject} appears on several boards (${names}). ` +
         `Name one in .armature.json under "board".`,
     )
   }

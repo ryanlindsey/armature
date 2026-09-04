@@ -3,6 +3,7 @@ import { createItem, OrphanedIssueError } from '../server/providers/github/items
 
 const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 const snapshot = {
+  board: { provider: 'github', name: 'acme/1', source: 'repo' as const },
   id: 'PVT_1', statusFieldId: 'F_1',
   statusOptions: [{ id: 'o-todo', name: 'Todo' }],
   semantics: { todo: 'Todo', claimed: 'In progress', review: null, done: 'Done' },

@@ -1,11 +1,23 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
-import type { BoardItem, BoardSnapshot } from '../types.js'
+import type { BoardItem, BoardSnapshot, CreateInput } from '../types.js'
 import { GitHubClient } from './client.js'
 
 export type ItemDetail = BoardItem & {
   body: string
   projectItemId: string | null
+  /**
+   * The epic this item belongs to.
+   *
+   * In v1 this is always identical to `parent`, by design rather than by accident: the epic is
+   * derived from GitHub's native sub-issue parent link and from nothing else, because
+   * parseEpicFromBody — the spec's declared body-convention fallback — is deliberately not
+   * wired in (see the comment above it). The two fields stay separate because they answer
+   * different questions: `parent` is whatever the tracker links, `epic` is what armature
+   * considers the owning epic. They diverge as soon as the body fallback is gated behind
+   * configuration, and under a tracker with no sub-issues `parent` would be null while `epic`
+   * is not.
+   */
   epic: WorkItemRef | null
 }
 
@@ -274,8 +286,6 @@ export async function claim(
     read: options.read,
   })
 }
-
-import type { CreateInput } from '../types.js'
 
 export class OrphanedIssueError extends Error {
   constructor(ref: WorkItemRef, cause: string) {

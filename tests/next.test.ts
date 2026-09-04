@@ -16,6 +16,7 @@ function make(
 
 function snap(items: BoardItem[]): BoardSnapshot {
   return {
+    board: { provider: 'github', name: 'acme/1', source: 'repo' },
     id: 'P', statusFieldId: 'F', statusOptions: [], semantics,
     items, repositories: [], collisions: {},
   }

@@ -1,4 +1,4 @@
-import type { RepoConfig } from '../../config.js'
+import { ConfigError, type RepoConfig } from '../../config.js'
 import type { WorkItemRef } from '../../ref.js'
 import type { GitHubClient } from './client.js'
 
@@ -26,11 +26,21 @@ export function readSiblingConfigFrom(client: GitHubClient): SiblingConfigReader
   return async (owner, repo) => {
     const data = await client.graphql<any>(CONFIG_QUERY, { owner, name: repo })
     const text = data.repository?.object?.text
+    // No file is a real answer: most repositories on a board declare nothing.
     if (!text) return null
     try {
       return JSON.parse(text) as RepoConfig
-    } catch {
-      return null
+    } catch (error) {
+      // A malformed file is not. This is the same format config-io.ts reads locally, and there a
+      // parse failure raises naming the file — reading it two ways meant a sibling with a typo
+      // silently lost its alias, and the loss then surfaced as a confident wrong diagnosis:
+      // "Unknown alias …, known aliases: …" for a repository that does declare one.
+      throw new ConfigError(
+        `${owner}/${repo}'s .armature.json is not valid JSON: ` +
+          `${error instanceof Error ? error.message : String(error)}. ` +
+          `Its alias cannot be read, so armature will not guess which repository a shorthand ` +
+          `reference names.`,
+      )
     }
   }
 }

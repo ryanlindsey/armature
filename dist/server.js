@@ -16820,7 +16820,8 @@ function parseEnvBoard(value) {
   return { provider: "github", owner: match2[1], number: Number(match2[2]) };
 }
 function resolveConfig(input) {
-  const repo = parseOriginUrl(input.originUrl);
+  const repo = input.originUrl === null ? null : parseOriginUrl(input.originUrl);
+  const subject = repo ? `${repo.owner}/${repo.name}` : "this directory";
   let board;
   let boardSource;
   const envBoard = input.env.ARMATURE_BOARD;
@@ -16838,12 +16839,14 @@ function resolveConfig(input) {
     boardSource = "derived";
   } else if (input.boardsContainingRepo.length === 0) {
     throw new ConfigError(
-      `No board found for ${repo.owner}/${repo.name}. Add .armature.json with a "board" key, or set ARMATURE_BOARD to "github:owner/number".`
+      `No board found for ${subject}. Add .armature.json with a "board" key, or set ARMATURE_BOARD to "github:owner/number".` + // Only now does the missing origin matter: without it there was no repository to ask
+      // which boards contain it, which is why nothing could be derived.
+      (input.originProblem ? ` ${input.originProblem}` : "")
     );
   } else {
     const names = input.boardsContainingRepo.map((b) => `${b.owner}/${b.number}`).join(", ");
     throw new ConfigError(
-      `${repo.owner}/${repo.name} appears on several boards (${names}). Name one in .armature.json under "board".`
+      `${subject} appears on several boards (${names}). Name one in .armature.json under "board".`
     );
   }
   return {
@@ -16913,19 +16916,28 @@ async function boardsContainingRepo(client, repo) {
 async function loadResolvedConfig(deps) {
   const cwd = deps.cwd ?? process.cwd();
   const home = deps.home ?? homedir();
-  const [repoConfig, userConfig, originUrl] = await Promise.all([
+  const [repoConfig, userConfig, origin] = await Promise.all([
     readRepoConfig(cwd),
     readUserConfig(home),
-    readOriginUrl(cwd)
+    readOriginUrl(cwd).then(
+      (url) => ({ url, problem: void 0 }),
+      (error2) => ({
+        url: null,
+        problem: error2 instanceof Error ? error2.message : String(error2)
+      })
+    )
   ]);
   let candidates = [];
-  try {
-    candidates = await boardsContainingRepo(deps.client, parseOriginUrl(originUrl));
-  } catch {
-    candidates = [];
+  if (origin.url !== null) {
+    try {
+      candidates = await boardsContainingRepo(deps.client, parseOriginUrl(origin.url));
+    } catch {
+      candidates = [];
+    }
   }
   return resolveConfig({
-    originUrl,
+    originUrl: origin.url,
+    originProblem: origin.problem,
     repoConfig,
     userConfig,
     env: deps.env,
@@ -17123,7 +17135,7 @@ query($owner:String!,$number:Int!,$cursor:String){
     }
   }
 }`;
-async function surveyBoard(client, board) {
+async function surveyBoard(client, board, boardSource) {
   const head = await client.graphql(BOARD_QUERY, { owner: board.owner, number: board.number, cursor: null });
   const project = head.organization?.projectV2;
   if (!project) throw new Error(`No project ${board.owner}/${board.number} is visible to this credential.`);
@@ -17150,6 +17162,11 @@ async function surveyBoard(client, board) {
   }));
   const statusOptions = project.field?.options ?? [];
   return {
+    board: {
+      provider: board.provider,
+      name: `${board.owner}/${board.number}`,
+      source: boardSource
+    },
     id: project.id,
     statusFieldId: project.field?.id ?? "",
     statusOptions,
@@ -17325,15 +17342,17 @@ async function createItem(client, board, snapshot, input, options = {}) {
 
 // server/providers/github/provider.ts
 var GitHubBoardProvider = class {
-  constructor(client, board, dryRun = false) {
+  constructor(client, board, options) {
     this.client = client;
     this.board = board;
-    this.dryRun = dryRun;
+    this.options = options;
+    this.dryRun = options.dryRun ?? false;
   }
   cached = null;
+  dryRun;
   // Derived facts are cached for the life of the process, never written to disk.
   async survey() {
-    this.cached ??= await surveyBoard(this.client, this.board);
+    this.cached ??= await surveyBoard(this.client, this.board, this.options.boardSource);
     return this.cached;
   }
   /**
@@ -17402,8 +17421,10 @@ function readSiblingConfigFrom(client) {
     if (!text) return null;
     try {
       return JSON.parse(text);
-    } catch {
-      return null;
+    } catch (error2) {
+      throw new ConfigError(
+        `${owner}/${repo}'s .armature.json is not valid JSON: ${error2 instanceof Error ? error2.message : String(error2)}. Its alias cannot be read, so armature will not guess which repository a shorthand reference names.`
+      );
     }
   };
 }
@@ -17716,7 +17737,10 @@ async function main() {
   const credential = await resolveCredential({ readCliToken: readCliTokenFromGh, env: process.env });
   const client = new GitHubClient(credential);
   const config2 = await loadResolvedConfig({ env: process.env, client });
-  const provider = new GitHubBoardProvider(client, config2.board, DRY_RUN);
+  const provider = new GitHubBoardProvider(client, config2.board, {
+    boardSource: config2.boardSource,
+    dryRun: DRY_RUN
+  });
   const refResolver = makeRefResolver(provider, readSiblingConfigFrom(client));
   const server = new Server(
     { name: "armature", version: VERSION },

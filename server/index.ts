@@ -381,7 +381,10 @@ async function main(): Promise<void> {
   // Constructed once per process: GitHubBoardProvider.survey() memoises for the life of the
   // instance, so building a fresh provider per call (as a naive wiring would) would survey the
   // board on every single tool invocation and throw the cache away each time.
-  const provider = new GitHubBoardProvider(client, config.board, DRY_RUN)
+  const provider = new GitHubBoardProvider(client, config.board, {
+    boardSource: config.boardSource,
+    dryRun: DRY_RUN,
+  })
 
   // Built once and closed over for the same reason: makeRefResolver caches the alias map
   // internally after its first build, and a fresh resolver per call would throw that cache away

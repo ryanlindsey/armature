@@ -154,6 +154,46 @@ describe('resolveConfig', () => {
     expect(c.boardSource).toBe('user')
   })
 
+  // Origin names the repository; it does not name the board when something else already does.
+  // Requiring it unconditionally meant the server refused to start outside a git checkout even
+  // when ARMATURE_BOARD fully determined which board to work.
+  it('resolves without an origin when the environment names the board', () => {
+    const c = resolveConfig({
+      originUrl: null,
+      repoConfig: {},
+      userConfig: {},
+      env: { ARMATURE_BOARD: 'github:acme/7' },
+      boardsContainingRepo: [],
+    })
+    expect(c.board.number).toBe(7)
+    expect(c.repo).toBeNull()
+  })
+
+  it('resolves without an origin when .armature.json names the board', () => {
+    const c = resolveConfig({
+      originUrl: null,
+      repoConfig: { board },
+      userConfig: {},
+      env: {},
+      boardsContainingRepo: [],
+    })
+    expect(c.board.number).toBe(1)
+    expect(c.boardSource).toBe('repo')
+  })
+
+  it('explains the missing origin only when the board could not be resolved without it', () => {
+    expect(() =>
+      resolveConfig({
+        originUrl: null,
+        originProblem: 'Cannot read the "origin" remote in /tmp/nowhere',
+        repoConfig: {},
+        userConfig: {},
+        env: {},
+        boardsContainingRepo: [],
+      }),
+    ).toThrow(/origin/)
+  })
+
   it('throws when no board is found anywhere', () => {
     expect(() =>
       resolveConfig({

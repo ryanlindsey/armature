@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { AliasConflictError, buildAliasMap, resolveAlias } from '../server/providers/github/aliases.js'
-import type { RepoConfig } from '../server/config.js'
+import {
+  AliasConflictError,
+  buildAliasMap,
+  readSiblingConfigFrom,
+  resolveAlias,
+} from '../server/providers/github/aliases.js'
+import { ConfigError, type RepoConfig } from '../server/config.js'
+import type { GitHubClient } from '../server/providers/github/client.js'
 
 const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 
@@ -30,6 +36,39 @@ describe('buildAliasMap', () => {
         ['acme/web', 'acme/api'],
       ),
     ).rejects.toThrow(AliasConflictError)
+  })
+})
+
+// The same file format was read two ways: config-io.ts raises naming the local .armature.json,
+// while this swallowed the parse error and returned null. A sibling with a typo therefore lost
+// its alias, and the loss then surfaced as a confident wrong diagnosis — "Unknown alias …, known
+// aliases: …" — for a repository that does declare one.
+describe('readSiblingConfigFrom', () => {
+  function clientReturning(text: string | null) {
+    return {
+      graphql: async () => ({ repository: { object: text === null ? null : { text } } }),
+    } as unknown as GitHubClient
+  }
+
+  it('reads a sibling alias declaration', async () => {
+    const read = readSiblingConfigFrom(clientReturning(JSON.stringify({ alias: 'site' })))
+    expect(await read('acme', 'site.example')).toEqual({ alias: 'site' })
+  })
+
+  it('returns null when a sibling has no .armature.json at all', async () => {
+    const read = readSiblingConfigFrom(clientReturning(null))
+    expect(await read('acme', 'web')).toBeNull()
+  })
+
+  it('surfaces a malformed sibling file instead of silently losing its alias', async () => {
+    const read = readSiblingConfigFrom(clientReturning('{ not json'))
+    await expect(read('acme', 'web')).rejects.toThrow(ConfigError)
+  })
+
+  it('names the repository and the file, so the typo can be found', async () => {
+    const read = readSiblingConfigFrom(clientReturning('{ not json'))
+    await expect(read('acme', 'web')).rejects.toThrow(/acme\/web/)
+    await expect(read('acme', 'web')).rejects.toThrow(/\.armature\.json/)
   })
 })
 

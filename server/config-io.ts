@@ -115,23 +115,37 @@ export async function loadResolvedConfig(deps: ConfigIODeps): Promise<ResolvedCo
   const cwd = deps.cwd ?? process.cwd()
   const home = deps.home ?? homedir()
 
-  const [repoConfig, userConfig, originUrl] = await Promise.all([
+  // The origin failure is carried, not thrown. Origin names this repository; it does not name
+  // the board when ARMATURE_BOARD or a declared board already does, and refusing to start
+  // outside a git checkout in that case is a requirement armature does not actually have.
+  // resolveConfig raises it — with this explanation attached — only if the board turns out to
+  // need it.
+  const [repoConfig, userConfig, origin] = await Promise.all([
     readRepoConfig(cwd),
     readUserConfig(home),
-    readOriginUrl(cwd),
+    readOriginUrl(cwd).then(
+      (url) => ({ url, problem: undefined as string | undefined }),
+      (error: unknown) => ({
+        url: null,
+        problem: error instanceof Error ? error.message : String(error),
+      }),
+    ),
   ])
 
-  // If origin can't even be parsed, boardsContainingRepo has no owner/repo to ask about —
-  // resolveConfig below raises the same ConfigError, so this just avoids a doomed query.
+  // If origin is absent or can't be parsed, boardsContainingRepo has no owner/repo to ask
+  // about — resolveConfig below raises the same ConfigError, so this just avoids a doomed query.
   let candidates: BoardRef[] = []
-  try {
-    candidates = await boardsContainingRepo(deps.client, parseOriginUrl(originUrl))
-  } catch {
-    candidates = []
+  if (origin.url !== null) {
+    try {
+      candidates = await boardsContainingRepo(deps.client, parseOriginUrl(origin.url))
+    } catch {
+      candidates = []
+    }
   }
 
   return resolveConfig({
-    originUrl,
+    originUrl: origin.url,
+    originProblem: origin.problem,
     repoConfig,
     userConfig,
     env: deps.env,

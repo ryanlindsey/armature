@@ -82,12 +82,31 @@ function makeClient() {
 describe('GitHubBoardProvider.survey', () => {
   it('memoises the board for the life of the provider', async () => {
     const { client, surveys } = makeClient()
-    const provider = new GitHubBoardProvider(client, board)
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
 
     await provider.survey()
     await provider.survey()
 
     expect(surveys.count).toBe(1)
+  })
+
+  // /armature-doctor is how a user checks armature's inferences before trusting them, and its
+  // first line asks for "the board, and where its identity came from". Neither was reachable:
+  // BoardSnapshot had no board at all, and main() computed config.boardSource and dropped it.
+  it('names the board and the precedence layer that supplied it', async () => {
+    const { client } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'env' })
+
+    const snapshot = await provider.survey()
+
+    expect(snapshot.board).toEqual({ provider: 'github', name: 'acme/1', source: 'env' })
+  })
+
+  it('reports the source it was actually given, not a default', async () => {
+    const { client } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'derived' })
+
+    expect((await provider.survey()).board.source).toBe('derived')
   })
 })
 
@@ -98,7 +117,7 @@ describe('GitHubBoardProvider.survey', () => {
 describe('GitHubBoardProvider invalidates its snapshot after a write', () => {
   it('re-reads the board after a claim, and reports the new status', async () => {
     const { client, surveys } = makeClient()
-    const provider = new GitHubBoardProvider(client, board)
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
 
     const before = await provider.survey()
     expect(before.items[0]!.status).toBe('Todo')
@@ -112,7 +131,7 @@ describe('GitHubBoardProvider invalidates its snapshot after a write', () => {
 
   it('re-reads the board after a status change', async () => {
     const { client, surveys } = makeClient()
-    const provider = new GitHubBoardProvider(client, board)
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
 
     await provider.survey()
     const surveysBefore = surveys.count
@@ -124,7 +143,7 @@ describe('GitHubBoardProvider invalidates its snapshot after a write', () => {
 
   it('re-reads the board after a creation, which adds an item to it', async () => {
     const { client, surveys } = makeClient()
-    const provider = new GitHubBoardProvider(client, board, true)
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo', dryRun: true })
 
     await provider.survey()
     const surveysBefore = surveys.count
@@ -136,7 +155,7 @@ describe('GitHubBoardProvider invalidates its snapshot after a write', () => {
 
   it('re-reads the board even when the write fails, because a failed write may still have landed', async () => {
     const { client, surveys } = makeClient()
-    const provider = new GitHubBoardProvider(client, board)
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
 
     await provider.survey()
     const surveysBefore = surveys.count

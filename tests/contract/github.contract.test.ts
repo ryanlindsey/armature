@@ -43,4 +43,7 @@ const client = {
 
 const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 
-describeBoardProvider('GitHubBoardProvider', async () => new GitHubBoardProvider(client, board))
+describeBoardProvider(
+  'GitHubBoardProvider',
+  async () => new GitHubBoardProvider(client, board, { boardSource: 'repo' }),
+)

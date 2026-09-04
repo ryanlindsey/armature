@@ -1,4 +1,4 @@
-import type { BoardRef } from '../../config.js'
+import type { BoardRef, BoardSource } from '../../config.js'
 import type { BoardItem, BoardSnapshot, StatusSemantics } from '../types.js'
 import { GitHubClient } from './client.js'
 
@@ -69,7 +69,14 @@ query($owner:String!,$number:Int!,$cursor:String){
   }
 }`
 
-export async function surveyBoard(client: GitHubClient, board: BoardRef): Promise<BoardSnapshot> {
+export async function surveyBoard(
+  client: GitHubClient,
+  board: BoardRef,
+  // Not derivable from the API: which layer of the config precedence chain pointed armature at
+  // this board is a fact about how armature was started, and `/armature-doctor` reports it so a
+  // user can check the inference before trusting it.
+  boardSource: BoardSource,
+): Promise<BoardSnapshot> {
   const head = await client.graphql<any>(BOARD_QUERY, { owner: board.owner, number: board.number, cursor: null })
   const project = head.organization?.projectV2
   if (!project) throw new Error(`No project ${board.owner}/${board.number} is visible to this credential.`)
@@ -108,6 +115,11 @@ export async function surveyBoard(client: GitHubClient, board: BoardRef): Promis
   const statusOptions = project.field?.options ?? []
 
   return {
+    board: {
+      provider: board.provider,
+      name: `${board.owner}/${board.number}`,
+      source: boardSource,
+    },
     id: project.id,
     statusFieldId: project.field?.id ?? '',
     statusOptions,

@@ -6,6 +6,7 @@ import type { BoardProvider, BoardSnapshot } from '../server/providers/types.js'
 import { BareRefError, parseRef } from '../server/ref.js'
 
 const snapshot: BoardSnapshot = {
+  board: { provider: 'github', name: 'acme/1', source: 'repo' },
   id: 'PVT_1',
   statusFieldId: 'F_1',
   statusOptions: [

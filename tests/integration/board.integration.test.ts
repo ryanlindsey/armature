@@ -11,9 +11,11 @@ describe.skipIf(!enabled || !owner || !number)('a real board, read only', () => 
   async function provider() {
     const credential = await resolveCredential({ readCliToken: readCliTokenFromGh, env: process.env })
     // dryRun stays true for the whole suite: this never mutates a board.
-    return new GitHubBoardProvider(new GitHubClient(credential), {
-      provider: 'github', owner: owner!, number,
-    }, true)
+    return new GitHubBoardProvider(
+      new GitHubClient(credential),
+      { provider: 'github', owner: owner!, number },
+      { boardSource: 'env', dryRun: true },
+    )
   }
 
   it('surveys every page of the board', async () => {

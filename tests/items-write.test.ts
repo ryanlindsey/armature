@@ -5,6 +5,7 @@ const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 const ref = { owner: 'acme', repo: 'web', number: 278 }
 
 const snapshot = {
+  board: { provider: 'github', name: 'acme/1', source: 'repo' as const },
   id: 'PVT_1',
   statusFieldId: 'F_1',
   statusOptions: [

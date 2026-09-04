@@ -222,6 +222,44 @@ describe('loadResolvedConfig', () => {
     expect((error as Error).message).not.toContain('ghp_SECRET')
   })
 
+  it('starts outside a git repository when ARMATURE_BOARD names the board', async () => {
+    const repoDir = await mkTemp()
+    const homeDir = await mkTemp()
+    dirs.push(repoDir, homeDir)
+    // Deliberately not a git repository: origin is only needed to name this repository.
+
+    const config = await loadResolvedConfig({
+      cwd: repoDir,
+      home: homeDir,
+      env: { ARMATURE_BOARD: 'github:acme/7' },
+    })
+    expect(config.board.number).toBe(7)
+    expect(config.repo).toBeNull()
+  })
+
+  it('starts outside a git repository when .armature.json names the board', async () => {
+    const repoDir = await mkTemp()
+    const homeDir = await mkTemp()
+    dirs.push(repoDir, homeDir)
+    await writeFile(
+      join(repoDir, '.armature.json'),
+      JSON.stringify({ board: { provider: 'github', owner: 'acme', number: 1 } }),
+    )
+
+    const config = await loadResolvedConfig({ cwd: repoDir, home: homeDir, env: {} })
+    expect(config.boardSource).toBe('repo')
+  })
+
+  it('still explains the missing origin when nothing else names a board', async () => {
+    const repoDir = await mkTemp()
+    const homeDir = await mkTemp()
+    dirs.push(repoDir, homeDir)
+
+    await expect(loadResolvedConfig({ cwd: repoDir, home: homeDir, env: {} })).rejects.toThrow(
+      /origin/,
+    )
+  })
+
   it('surfaces a malformed repo config file by name', async () => {
     const repoDir = await mkTemp()
     const homeDir = await mkTemp()
