@@ -17,11 +17,11 @@ function reader(configs: Record<string, RepoConfig | null>) {
 describe('buildAliasMap', () => {
   it('collects an alias declared by each repository about itself', async () => {
     const map = await buildAliasMap(
-      reader({ 'acme/site.example': { board, alias: 'apex' }, 'acme/api': { board, alias: 'engine' } }),
+      reader({ 'acme/site.example': { board, alias: 'site' }, 'acme/api': { board, alias: 'api' } }),
       ['acme/site.example', 'acme/api'],
     )
-    expect(map.get('apex')).toEqual({ owner: 'acme', repo: 'site.example' })
-    expect(map.get('engine')).toEqual({ owner: 'acme', repo: 'api' })
+    expect(map.get('site')).toEqual({ owner: 'acme', repo: 'site.example' })
+    expect(map.get('api')).toEqual({ owner: 'acme', repo: 'api' })
   })
 
   it('skips a repository with no config', async () => {
@@ -32,7 +32,7 @@ describe('buildAliasMap', () => {
   it('refuses two repositories claiming one alias', async () => {
     await expect(
       buildAliasMap(
-        reader({ 'acme/web': { board, alias: 'apex' }, 'acme/api': { board, alias: 'apex' } }),
+        reader({ 'acme/web': { board, alias: 'site' }, 'acme/api': { board, alias: 'site' } }),
         ['acme/web', 'acme/api'],
       ),
     ).rejects.toThrow(AliasConflictError)
@@ -73,14 +73,14 @@ describe('readSiblingConfigFrom', () => {
 })
 
 describe('resolveAlias', () => {
-  const map = new Map([['apex', { owner: 'acme', repo: 'site.example' }]])
+  const map = new Map([['site', { owner: 'acme', repo: 'site.example' }]])
 
   it('expands an alias reference', () => {
-    expect(resolveAlias(map, 'apex#272')).toEqual({ owner: 'acme', repo: 'site.example', number: 272 })
+    expect(resolveAlias(map, 'site#272')).toEqual({ owner: 'acme', repo: 'site.example', number: 272 })
   })
 
   it('returns null for an unknown alias', () => {
-    expect(resolveAlias(map, 'racing#293')).toBeNull()
+    expect(resolveAlias(map, 'tools#293')).toBeNull()
   })
 
   it('returns null for a bare number', () => {

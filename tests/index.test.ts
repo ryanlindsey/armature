@@ -399,11 +399,11 @@ describe('makeRefResolver', () => {
   it("expands a known alias by building the map from the board's repositories", async () => {
     const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
     const read = vi.fn(
-      siblingReader({ 'acme/site.example': { alias: 'apex' }, 'acme/web': null }),
+      siblingReader({ 'acme/site.example': { alias: 'site' }, 'acme/web': null }),
     )
     const resolveRef = makeRefResolver(provider, read)
 
-    await expect(resolveRef('apex#272')).resolves.toEqual({
+    await expect(resolveRef('site#272')).resolves.toEqual({
       owner: 'acme',
       repo: 'site.example',
       number: 272,
@@ -412,11 +412,11 @@ describe('makeRefResolver', () => {
 
   it('builds the alias map at most once, on first use, and never for a qualified ref', async () => {
     const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
-    const read = vi.fn(siblingReader({ 'acme/site.example': { alias: 'apex' } }))
+    const read = vi.fn(siblingReader({ 'acme/site.example': { alias: 'site' } }))
     const resolveRef = makeRefResolver(provider, read)
 
-    await resolveRef('apex#272')
-    await resolveRef('apex#900')
+    await resolveRef('site#272')
+    await resolveRef('site#900')
     await resolveRef('acme/web#1')
 
     expect(provider.survey).toHaveBeenCalledTimes(1)
@@ -437,13 +437,13 @@ describe('makeRefResolver', () => {
   it('fails loud, naming the known aliases, when the alias is unrecognised', async () => {
     const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
     const read = vi.fn(
-      siblingReader({ 'acme/site.example': { alias: 'apex' }, 'acme/web': { alias: 'engine' } }),
+      siblingReader({ 'acme/site.example': { alias: 'site' }, 'acme/web': { alias: 'api' } }),
     )
     const resolveRef = makeRefResolver(provider, read)
 
-    await expect(resolveRef('racing#293')).rejects.toThrow(/racing/)
-    await expect(resolveRef('racing#293')).rejects.toThrow(/apex/)
-    await expect(resolveRef('racing#293')).rejects.toThrow(/engine/)
+    await expect(resolveRef('tools#293')).rejects.toThrow(/tools/)
+    await expect(resolveRef('tools#293')).rejects.toThrow(/site/)
+    await expect(resolveRef('tools#293')).rejects.toThrow(/api/)
   })
 
   it('says plainly that no repository declares an alias when the map is empty', async () => {
@@ -451,17 +451,17 @@ describe('makeRefResolver', () => {
     const read = vi.fn().mockResolvedValue(null)
     const resolveRef = makeRefResolver(provider, read)
 
-    await expect(resolveRef('racing#293')).rejects.toThrow(/no repository/i)
+    await expect(resolveRef('tools#293')).rejects.toThrow(/no repository/i)
   })
 
   it('propagates a conflicting alias declaration as AliasConflictError', async () => {
     const provider = makeProvider({ survey: vi.fn().mockResolvedValue(snapshotWithSiblings) })
     const read = vi.fn(
-      siblingReader({ 'acme/site.example': { alias: 'apex' }, 'acme/web': { alias: 'apex' } }),
+      siblingReader({ 'acme/site.example': { alias: 'site' }, 'acme/web': { alias: 'site' } }),
     )
     const resolveRef = makeRefResolver(provider, read)
 
-    await expect(resolveRef('apex#272')).rejects.toThrow(AliasConflictError)
+    await expect(resolveRef('site#272')).rejects.toThrow(AliasConflictError)
   })
 
   it('retries a failed map build on the next lookup rather than replaying the stale rejection', async () => {
@@ -469,14 +469,14 @@ describe('makeRefResolver', () => {
     let shouldFail = true
     const read = vi.fn(async (owner: string, repo: string) => {
       if (shouldFail) throw new Error('transient network error')
-      return siblingReader({ 'acme/site.example': { alias: 'apex' } })(owner, repo)
+      return siblingReader({ 'acme/site.example': { alias: 'site' } })(owner, repo)
     })
     const resolveRef = makeRefResolver(provider, read)
 
-    await expect(resolveRef('apex#272')).rejects.toThrow('transient network error')
+    await expect(resolveRef('site#272')).rejects.toThrow('transient network error')
 
     shouldFail = false
-    await expect(resolveRef('apex#272')).resolves.toEqual({
+    await expect(resolveRef('site#272')).resolves.toEqual({
       owner: 'acme',
       repo: 'site.example',
       number: 272,
@@ -488,13 +488,13 @@ describe('dispatch: ref resolution', () => {
   it('uses parseRef alone when no resolver is supplied, so an alias token is still refused', async () => {
     const provider = makeProvider()
     await expect(
-      dispatch(provider, 'item_get', { ref: 'apex#272' }, { dryRun: false }),
+      dispatch(provider, 'item_get', { ref: 'site#272' }, { dryRun: false }),
     ).rejects.toThrow(BareRefError)
   })
 
   it('retries item_get through the injected resolver', async () => {
     const resolveRef = vi.fn(async (token: string) =>
-      token === 'apex#272' ? { owner: 'acme', repo: 'site.example', number: 272 } : parseRef(token),
+      token === 'site#272' ? { owner: 'acme', repo: 'site.example', number: 272 } : parseRef(token),
     )
     const getItem = vi.fn().mockResolvedValue({
       ref: { owner: 'acme', repo: 'site.example', number: 272 },
@@ -502,7 +502,7 @@ describe('dispatch: ref resolution', () => {
     })
     const provider = makeProvider({ getItem })
 
-    await dispatch(provider, 'item_get', { ref: 'apex#272' }, { dryRun: false, resolveRef })
+    await dispatch(provider, 'item_get', { ref: 'site#272' }, { dryRun: false, resolveRef })
 
     expect(getItem).toHaveBeenCalledWith({ owner: 'acme', repo: 'site.example', number: 272 })
   })
@@ -511,9 +511,9 @@ describe('dispatch: ref resolution', () => {
     const resolveRef = vi.fn().mockResolvedValue({ owner: 'acme', repo: 'site.example', number: 9 })
     const provider = makeProvider()
 
-    await dispatch(provider, 'board_next', { epic: 'apex#9' }, { dryRun: false, resolveRef })
+    await dispatch(provider, 'board_next', { epic: 'site#9' }, { dryRun: false, resolveRef })
 
-    expect(resolveRef).toHaveBeenCalledWith('apex#9')
+    expect(resolveRef).toHaveBeenCalledWith('site#9')
   })
 
 })

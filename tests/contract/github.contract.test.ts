@@ -2,13 +2,15 @@ import type { GitHubClient } from '../../server/providers/github/client.js'
 import { GitHubBoardProvider } from '../../server/providers/github/provider.js'
 import { describeBoardProvider } from './provider.contract.js'
 
+// Titles carry the repository, so an item fetched for the wrong repository is detectable — see
+// the contract's precondition, which requires colliding items to be distinguishable.
 function issue(repo: string, number: number) {
   return {
-    id: `node-${repo}-${number}`,
+    id: `PVTI-${repo}-${number}`,
     fieldValueByName: { name: 'Todo' },
     content: {
       number,
-      title: `Item ${number}`,
+      title: `${repo} item ${number}`,
       state: 'OPEN',
       repository: { owner: { login: 'acme' }, name: repo },
       parent: null,
@@ -36,8 +38,37 @@ const boardResponse = {
   },
 }
 
+// Answers the single-issue query as GitHub does — rooted at repository(owner,name) — so the
+// contract's collision-resolution assertion has something real to resolve against. A fake that
+// returned the board for every query could not distinguish acme/web#278 from acme/api#278.
 const client = {
-  graphql: async () => boardResponse,
+  graphql: async (query: string, variables: Record<string, unknown>) => {
+    if (!query.includes('issue(number:$number)')) return boardResponse
+
+    const node = nodes.find(
+      (n) => n.content.repository.name === variables.name && n.content.number === variables.number,
+    )
+    if (!node) return { repository: { issue: null } }
+
+    return {
+      repository: {
+        issue: {
+          id: `I-${node.content.repository.name}-${node.content.number}`,
+          number: node.content.number,
+          title: node.content.title,
+          body: '',
+          state: node.content.state,
+          parent: node.content.parent,
+          projectItems: {
+            nodes: [
+              { id: node.id, project: { number: 1 }, fieldValueByName: node.fieldValueByName },
+            ],
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      },
+    }
+  },
   collectAll: async () => nodes,
 } as unknown as GitHubClient
 

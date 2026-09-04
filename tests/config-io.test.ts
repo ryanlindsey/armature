@@ -41,11 +41,11 @@ describe('readRepoConfig', () => {
     dirs.push(dir)
     await writeFile(
       join(dir, '.armature.json'),
-      JSON.stringify({ board: { provider: 'github', owner: 'acme', number: 1 }, alias: 'apex' }),
+      JSON.stringify({ board: { provider: 'github', owner: 'acme', number: 1 }, alias: 'site' }),
     )
     expect(await readRepoConfig(dir)).toEqual({
       board: { provider: 'github', owner: 'acme', number: 1 },
-      alias: 'apex',
+      alias: 'site',
     })
   })
 

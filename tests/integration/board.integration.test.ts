@@ -48,12 +48,26 @@ describe.skipIf(!enabled || !owner || !number)('a real board, read only', () => 
   it('claims nothing in dry run', async () => {
     const p = await provider()
     const snapshot = await p.survey()
-    const candidate = snapshot.items.find((i) => i.status === snapshot.semantics.todo)
-    if (!candidate) return
 
-    const before = candidate.status
-    await p.claim(candidate.ref)
-    const after = (await p.survey()).items.find((i) => i.id === candidate.id)
-    expect(after?.status).toBe(before)
+    // `if (!candidate) return` used to pass silently on a board with nothing to claim — a green
+    // test that verified nothing. The board this suite runs against must be able to exercise
+    // the assertion, or the suite must say it cannot.
+    const candidate = snapshot.items.find((i) => i.status === snapshot.semantics.todo)
+    expect(
+      candidate,
+      `the integration board must hold at least one item in "${snapshot.semantics.todo}"`,
+    ).toBeDefined()
+
+    const before = candidate!.status
+    await p.claim(candidate!.ref)
+
+    // A fresh provider, not `p.survey()` again: survey() memoises, so re-surveying the same
+    // provider compared a cached object with itself and would have passed even if claim() had
+    // moved the item. (The provider does now invalidate after a write, but a test of "the board
+    // did not change" must not depend on the cache behaviour of the thing it is testing.)
+    const reread = await (await provider()).survey()
+    const after = reread.items.find((i) => i.id === candidate!.id)
+    expect(after, 'the item vanished from the board between surveys').toBeDefined()
+    expect(after!.status).toBe(before)
   })
 })
