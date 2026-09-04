@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/ryanlindsey/armature/compare/armature-v0.3.0...armature-v0.3.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* land a created item in the board's todo status ([#19](https://github.com/ryanlindsey/armature/issues/19)) ([e9f6f18](https://github.com/ryanlindsey/armature/commit/e9f6f182eb133cbd9dd56d49b1c489e36edaa171))
+
 ## [0.3.0](https://github.com/ryanlindsey/armature/compare/armature-v0.2.2...armature-v0.3.0) (2026-09-04)
 
 
