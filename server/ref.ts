@@ -1,3 +1,5 @@
+import { hostnameOf, isGitHubHost, redactCredentials } from './url.js'
+
 export type WorkItemRef = {
   owner: string
   repo: string
@@ -6,7 +8,12 @@ export type WorkItemRef = {
 
 const SEGMENT = '[A-Za-z0-9._-]+'
 const SHORTHAND = new RegExp(`^(${SEGMENT})\\/(${SEGMENT})#(\\d+)$`)
-const URL_FORM = new RegExp(`^https?:\\/\\/[^/]+\\/(${SEGMENT})\\/(${SEGMENT})\\/issues\\/(\\d+)(?:[/?#]|$)`)
+// The host is captured rather than skipped: the path shape below is not distinctive — Gitea and
+// Forgejo serve issues at exactly /owner/repo/issues/N — so which host it came from is the only
+// thing that says whether this URL names a GitHub issue at all.
+const URL_FORM = new RegExp(
+  `^https?:\\/\\/([^/]+)\\/(${SEGMENT})\\/(${SEGMENT})\\/issues\\/(\\d+)(?:[/?#]|$)`,
+)
 
 export class BareRefError extends Error {
   constructor(input: string) {
@@ -19,11 +26,33 @@ export class BareRefError extends Error {
   }
 }
 
+export class ForeignHostError extends Error {
+  constructor(input: string, host: string) {
+    super(
+      `"${redactCredentials(input)}" is hosted on ${host}, which armature cannot read. ` +
+        `Armature talks to github.com only, and Gitea, Forgejo and GitLab all serve issues at ` +
+        `the same /owner/repo/issues/number path — so reading this as a GitHub reference would ` +
+        `name a different tracker's issue. Use a github.com URL, or owner/repo#number.`,
+    )
+    this.name = 'ForeignHostError'
+  }
+}
+
 export function parseRef(input: string): WorkItemRef {
   const trimmed = input.trim()
-  const match = SHORTHAND.exec(trimmed) ?? URL_FORM.exec(trimmed)
-  if (!match) throw new BareRefError(trimmed)
-  return { owner: match[1]!, repo: match[2]!, number: Number(match[3]!) }
+
+  const shorthand = SHORTHAND.exec(trimmed)
+  if (shorthand) {
+    return { owner: shorthand[1]!, repo: shorthand[2]!, number: Number(shorthand[3]!) }
+  }
+
+  const url = URL_FORM.exec(trimmed)
+  if (!url) throw new BareRefError(trimmed)
+
+  // hostnameOf, not the raw capture: `[^/]+` takes the whole authority, userinfo included.
+  const host = hostnameOf(url[1]!)
+  if (!isGitHubHost(host)) throw new ForeignHostError(trimmed, host)
+  return { owner: url[2]!, repo: url[3]!, number: Number(url[4]!) }
 }
 
 export function formatRef(ref: WorkItemRef): string {

@@ -202,6 +202,26 @@ describe('loadResolvedConfig', () => {
     )
   })
 
+  // End to end: git happily reports an origin carrying a credential, and the whole failure path
+  // from there to the MCP client must not carry it along.
+  it('never echoes a credential in the origin remote', async () => {
+    const repoDir = await mkTemp()
+    const homeDir = await mkTemp()
+    dirs.push(repoDir, homeDir)
+    await run('git', ['init'], { cwd: repoDir })
+    await run(
+      'git',
+      ['remote', 'add', 'origin', 'https://user:ghp_SECRET@github.com/acme/web/'],
+      { cwd: repoDir },
+    )
+
+    const error = await loadResolvedConfig({ cwd: repoDir, home: homeDir, env: {} }).catch(
+      (e: Error) => e,
+    )
+    expect(error).toBeInstanceOf(ConfigError)
+    expect((error as Error).message).not.toContain('ghp_SECRET')
+  })
+
   it('surfaces a malformed repo config file by name', async () => {
     const repoDir = await mkTemp()
     const homeDir = await mkTemp()

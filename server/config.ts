@@ -1,3 +1,5 @@
+import { hostnameOf, isGitHubHost, redactCredentials } from './url.js'
+
 export type BoardRef = { provider: 'github'; owner: string; number: number }
 
 export type RepoConfig = {
@@ -30,12 +32,32 @@ export class ConfigError extends Error {
   }
 }
 
-const ORIGIN = /^(?:git@[^:]+:|https?:\/\/[^/]+\/)([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/
+// The host is captured on both branches, for the same reason parseRef captures it: /owner/repo is
+// every forge's remote shape, and armature's client speaks to api.github.com alone.
+const ORIGIN = /^(?:git@([^:/]+):|https?:\/\/([^/]+)\/)([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/
 
 export function parseOriginUrl(url: string): { owner: string; name: string } {
-  const match = ORIGIN.exec(url.trim())
-  if (!match) throw new ConfigError(`Cannot read an owner and repository from origin "${url}".`)
-  return { owner: match[1]!, name: match[2]! }
+  const trimmed = url.trim()
+  // Every mention of the remote goes through this. An https remote may carry a credential —
+  // `https://user:ghp_SECRET@github.com/acme/web/` is an ordinary GitHub URL that this pattern
+  // happens not to match, thanks to the trailing slash — and these messages reach stderr and the
+  // MCP client.
+  const safe = redactCredentials(trimmed)
+
+  const match = ORIGIN.exec(trimmed)
+  if (!match) throw new ConfigError(`Cannot read an owner and repository from origin "${safe}".`)
+
+  // hostnameOf, not the raw capture: the https branch's `[^/]+` takes userinfo with it.
+  const host = hostnameOf(match[1] ?? match[2]!)
+  if (!isGitHubHost(host)) {
+    throw new ConfigError(
+      `origin "${safe}" is on ${host}, which armature cannot read. Armature v1 talks to ` +
+        `github.com only. Run it from a repository whose origin is on github.com, or name the ` +
+        `board explicitly with ARMATURE_BOARD.`,
+    )
+  }
+
+  return { owner: match[3]!, name: match[4]! }
 }
 
 function parseEnvBoard(value: string): BoardRef {

@@ -21,6 +21,54 @@ describe('parseOriginUrl', () => {
   it('rejects an unparseable remote', () => {
     expect(() => parseOriginUrl('not-a-remote')).toThrow(ConfigError)
   })
+
+  // Same question as parseRef's host check, and cheaper decided together: armature's client
+  // talks to api.github.com only, so an origin on another host names a repository armature
+  // cannot read — and would be reported as if it could.
+  it('rejects a GitLab ssh remote', () => {
+    expect(() => parseOriginUrl('git@gitlab.com:acme/web.git')).toThrow(ConfigError)
+    expect(() => parseOriginUrl('git@gitlab.com:acme/web.git')).toThrow(/gitlab\.com/)
+  })
+
+  it('rejects a self-hosted Gitea https remote', () => {
+    expect(() => parseOriginUrl('https://gitea.example/acme/web.git')).toThrow(ConfigError)
+  })
+
+  it('accepts an https remote that carries a credential', () => {
+    expect(parseOriginUrl('https://user:ghp_SECRET@github.com/acme/web.git')).toEqual({
+      owner: 'acme', name: 'web',
+    })
+  })
+
+  // An ordinary GitHub URL with a trailing slash does not match, and the error interpolated the
+  // raw remote — so a credential in the origin was echoed verbatim to stderr and to the MCP
+  // client.
+  it('never echoes a credential from an unparseable remote', () => {
+    const error = (() => {
+      try {
+        parseOriginUrl('https://user:ghp_SECRET@github.com/acme/web/')
+        return null
+      } catch (e) {
+        return e as Error
+      }
+    })()
+    expect(error).toBeInstanceOf(ConfigError)
+    expect(error!.message).not.toContain('ghp_SECRET')
+    expect(error!.message).toContain('***@github.com')
+  })
+
+  it('never echoes a credential from a remote on the wrong host', () => {
+    const error = (() => {
+      try {
+        parseOriginUrl('https://user:ghp_SECRET@gitea.example/acme/web.git')
+        return null
+      } catch (e) {
+        return e as Error
+      }
+    })()
+    expect(error).toBeInstanceOf(ConfigError)
+    expect(error!.message).not.toContain('ghp_SECRET')
+  })
 })
 
 describe('resolveConfig', () => {

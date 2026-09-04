@@ -16778,6 +16778,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify as promisify2 } from "node:util";
 
+// server/url.ts
+function redactCredentials(text) {
+  return text.replace(/([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/\s@]*@/g, "$1***@");
+}
+var GITHUB_HOSTS = /* @__PURE__ */ new Set(["github.com", "www.github.com"]);
+function hostnameOf(authority) {
+  const lowered = authority.toLowerCase();
+  return lowered.slice(lowered.lastIndexOf("@") + 1).replace(/:\d+$/, "");
+}
+function isGitHubHost(host) {
+  return GITHUB_HOSTS.has(hostnameOf(host));
+}
+
 // server/config.ts
 var ConfigError = class extends Error {
   constructor(message) {
@@ -16785,11 +16798,19 @@ var ConfigError = class extends Error {
     this.name = "ConfigError";
   }
 };
-var ORIGIN = /^(?:git@[^:]+:|https?:\/\/[^/]+\/)([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/;
+var ORIGIN = /^(?:git@([^:/]+):|https?:\/\/([^/]+)\/)([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?$/;
 function parseOriginUrl(url) {
-  const match2 = ORIGIN.exec(url.trim());
-  if (!match2) throw new ConfigError(`Cannot read an owner and repository from origin "${url}".`);
-  return { owner: match2[1], name: match2[2] };
+  const trimmed = url.trim();
+  const safe = redactCredentials(trimmed);
+  const match2 = ORIGIN.exec(trimmed);
+  if (!match2) throw new ConfigError(`Cannot read an owner and repository from origin "${safe}".`);
+  const host = hostnameOf(match2[1] ?? match2[2]);
+  if (!isGitHubHost(host)) {
+    throw new ConfigError(
+      `origin "${safe}" is on ${host}, which armature cannot read. Armature v1 talks to github.com only. Run it from a repository whose origin is on github.com, or name the board explicitly with ARMATURE_BOARD.`
+    );
+  }
+  return { owner: match2[3], name: match2[4] };
 }
 function parseEnvBoard(value) {
   const match2 = /^github:([A-Za-z0-9._-]+)\/(\d+)$/.exec(value.trim());
@@ -16864,7 +16885,7 @@ async function readOriginUrl(cwd = process.cwd()) {
     return stdout.trim();
   } catch (error2) {
     throw new ConfigError(
-      `Cannot read the "origin" remote in ${cwd}: ${error2 instanceof Error ? error2.message.trim() : String(error2)}. Run armature from inside a git repository with an "origin" remote configured.`
+      `Cannot read the "origin" remote in ${cwd}: ` + redactCredentials(error2 instanceof Error ? error2.message.trim() : String(error2)) + `. Run armature from inside a git repository with an "origin" remote configured.`
     );
   }
 }
@@ -16929,7 +16950,9 @@ function logMutation(entry, write = (l) => process.stderr.write(l + "\n")) {
 // server/ref.ts
 var SEGMENT = "[A-Za-z0-9._-]+";
 var SHORTHAND = new RegExp(`^(${SEGMENT})\\/(${SEGMENT})#(\\d+)$`);
-var URL_FORM = new RegExp(`^https?:\\/\\/[^/]+\\/(${SEGMENT})\\/(${SEGMENT})\\/issues\\/(\\d+)(?:[/?#]|$)`);
+var URL_FORM = new RegExp(
+  `^https?:\\/\\/([^/]+)\\/(${SEGMENT})\\/(${SEGMENT})\\/issues\\/(\\d+)(?:[/?#]|$)`
+);
 var BareRefError = class extends Error {
   constructor(input) {
     super(
@@ -16938,11 +16961,25 @@ var BareRefError = class extends Error {
     this.name = "BareRefError";
   }
 };
+var ForeignHostError = class extends Error {
+  constructor(input, host) {
+    super(
+      `"${redactCredentials(input)}" is hosted on ${host}, which armature cannot read. Armature talks to github.com only, and Gitea, Forgejo and GitLab all serve issues at the same /owner/repo/issues/number path \u2014 so reading this as a GitHub reference would name a different tracker's issue. Use a github.com URL, or owner/repo#number.`
+    );
+    this.name = "ForeignHostError";
+  }
+};
 function parseRef(input) {
   const trimmed = input.trim();
-  const match2 = SHORTHAND.exec(trimmed) ?? URL_FORM.exec(trimmed);
-  if (!match2) throw new BareRefError(trimmed);
-  return { owner: match2[1], repo: match2[2], number: Number(match2[3]) };
+  const shorthand = SHORTHAND.exec(trimmed);
+  if (shorthand) {
+    return { owner: shorthand[1], repo: shorthand[2], number: Number(shorthand[3]) };
+  }
+  const url = URL_FORM.exec(trimmed);
+  if (!url) throw new BareRefError(trimmed);
+  const host = hostnameOf(url[1]);
+  if (!isGitHubHost(host)) throw new ForeignHostError(trimmed, host);
+  return { owner: url[2], repo: url[3], number: Number(url[4]) };
 }
 function formatRef(ref) {
   return `${ref.owner}/${ref.repo}#${ref.number}`;

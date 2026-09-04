@@ -12,6 +12,7 @@ import {
   type ResolvedConfig,
 } from './config.js'
 import type { GitHubClient } from './providers/github/client.js'
+import { redactCredentials } from './url.js'
 
 const run = promisify(execFile)
 
@@ -52,10 +53,12 @@ export async function readOriginUrl(cwd = process.cwd()): Promise<string> {
     const { stdout } = await run('git', ['remote', 'get-url', 'origin'], { cwd })
     return stdout.trim()
   } catch (error) {
+    // git's stderr is echoed verbatim, and git quotes the remote URL in several of its own
+    // failure messages — so this is a credential-leak path too, not just parseOriginUrl's.
     throw new ConfigError(
       `Cannot read the "origin" remote in ${cwd}: ` +
-        `${error instanceof Error ? error.message.trim() : String(error)}. ` +
-        `Run armature from inside a git repository with an "origin" remote configured.`,
+        redactCredentials(error instanceof Error ? error.message.trim() : String(error)) +
+        `. Run armature from inside a git repository with an "origin" remote configured.`,
     )
   }
 }
