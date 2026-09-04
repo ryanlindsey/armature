@@ -17287,15 +17287,24 @@ async function setStatus(client, board, snapshot, ref, status, options = {}) {
     const names = snapshot.statusOptions.map((o) => o.name).join(", ");
     throw new Error(`This board has no status "${status}". It offers: ${names}.`);
   }
-  const before = await read(ref);
-  if (before.projectItemId === null) throw new NotOnBoardError(ref, board);
-  if (options.expectStatus !== void 0 && before.status !== options.expectStatus) {
-    throw new StaleItemError(ref, options.expectStatus, before.status);
+  if (options.projectItemId !== void 0 && options.expectStatus !== void 0) {
+    throw new Error(
+      `setStatus cannot check that ${formatRef(ref)} is still "${options.expectStatus}" when it is given a projectItemId: the check reads the item, and supplying the id is what skips that read. Ask for one or the other.`
+    );
   }
-  if (options.dryRun) return { ...before, status };
+  let itemId = options.projectItemId;
+  if (itemId === void 0 || options.dryRun) {
+    const before = await read(ref);
+    if (before.projectItemId === null) throw new NotOnBoardError(ref, board);
+    if (options.expectStatus !== void 0 && before.status !== options.expectStatus) {
+      throw new StaleItemError(ref, options.expectStatus, before.status);
+    }
+    if (options.dryRun) return { ...before, status };
+    itemId = before.projectItemId;
+  }
   await client.graphql(SET_STATUS, {
     project: snapshot.id,
-    item: before.projectItemId,
+    item: itemId,
     field: snapshot.statusFieldId,
     option: option.id
   });
@@ -17318,6 +17327,14 @@ var OrphanedIssueError = class extends Error {
     this.name = "OrphanedIssueError";
   }
 };
+var StatuslessItemError = class extends Error {
+  constructor(ref, status, cause) {
+    super(
+      `Created ${formatRef(ref)} and added it to the board, but could not set its status to "${status}": ${cause} Its status is unconfirmed, so board_next may not return it. Read it with item_get, set it with item_status, or close the issue.`
+    );
+    this.name = "StatuslessItemError";
+  }
+};
 var REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`;
 var CREATE_ISSUE = `
 mutation($repo:ID!,$title:String!,$body:String!){
@@ -17337,7 +17354,7 @@ async function createItem(client, board, snapshot, input, options = {}) {
       title: input.title,
       body: input.body,
       state: "OPEN",
-      status: null,
+      status: snapshot.semantics.todo,
       projectItemId: "(dry-run)",
       parent: null,
       epic: null
@@ -17352,12 +17369,24 @@ async function createItem(client, board, snapshot, input, options = {}) {
   const number3 = created.createIssue.issue.number;
   const contentId = created.createIssue.issue.id;
   const madeRef = { owner: input.owner, repo: input.repo, number: number3 };
+  let added;
   try {
-    await client.graphql(ADD_TO_BOARD, { project: snapshot.id, content: contentId });
+    added = await client.graphql(ADD_TO_BOARD, { project: snapshot.id, content: contentId });
   } catch (error2) {
     throw new OrphanedIssueError(madeRef, error2 instanceof Error ? error2.message : String(error2));
   }
-  return read(madeRef);
+  try {
+    return await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
+      read,
+      projectItemId: added.addProjectV2ItemById.item.id
+    });
+  } catch (error2) {
+    throw new StatuslessItemError(
+      madeRef,
+      snapshot.semantics.todo,
+      error2 instanceof Error ? error2.message : String(error2)
+    );
+  }
 }
 
 // server/providers/github/provider.ts
@@ -17584,7 +17613,7 @@ var TOOLS = [
   },
   {
     name: "item_create",
-    description: "Create an issue and add it to the board together. Reports an orphan loudly. Does not link the new issue to a parent epic \u2014 set the parent on the issue afterwards.",
+    description: "Create an issue, add it to the board, and set it to the board's todo status, so the new item is one board_next can return without a second call. Reports loudly, and says which of the two the board is left in, if either write fails. Does not link the new issue to a parent epic \u2014 set the parent on the issue afterwards.",
     inputSchema: {
       type: "object",
       properties: {
