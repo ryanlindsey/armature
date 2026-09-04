@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ryanlindsey/armature/compare/armature-v0.2.0...armature-v0.2.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* start the server before resolving config, and repair both board queries ([#7](https://github.com/ryanlindsey/armature/issues/7)) ([6ab0f6c](https://github.com/ryanlindsey/armature/commit/6ab0f6cdda7c41b96ed2646ce2c989589e33112d))
+
 ## [0.2.0](https://github.com/ryanlindsey/armature/compare/armature-v0.1.0...armature-v0.2.0) (2026-09-04)
 
 
