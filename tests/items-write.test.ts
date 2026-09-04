@@ -104,6 +104,54 @@ describe('setStatus', () => {
     expect((error as Error).message).toContain('acme/1')
     expect((error as Error).message).toMatch(/does not add it to a board/i)
   })
+
+  // A caller supplying the board item id skips the read, and the staleness check is a comparison
+  // against what that read returned. Honouring both would mean quietly not checking — the failure
+  // mode `expectStatus` exists to prevent, reintroduced by the option that was meant to be safe.
+  it('refuses a projectItemId and an expectStatus together rather than skipping the check', async () => {
+    const read = vi.fn(async () => detail('Todo'))
+    const client = { graphql: vi.fn() } as any
+
+    await expect(
+      setStatus(client, board, snapshot, ref, 'In progress', {
+        read,
+        projectItemId: 'PVTI_1',
+        expectStatus: 'Todo',
+      }),
+    ).rejects.toThrow(/one or the other/i)
+    expect(client.graphql).not.toHaveBeenCalled()
+  })
+
+  it('writes with a supplied board item id without reading to re-derive it', async () => {
+    const read = vi.fn(async () => detail('In progress'))
+    const client = { graphql: vi.fn().mockResolvedValue({}) } as any
+
+    const result = await setStatus(client, board, snapshot, ref, 'In progress', {
+      read,
+      projectItemId: 'PVTI_supplied',
+    })
+
+    // One read only — the read-back that verifies the write, which is never skipped.
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(client.graphql.mock.calls[0]![1].item).toBe('PVTI_supplied')
+    expect(result.status).toBe('In progress')
+  })
+
+  // The id says a write is possible; it does not say a write was asked for. A dry run that fell
+  // through to the mutation because it had an id would be the worst failure this flag can have.
+  it('performs no write under dry run even when handed a board item id', async () => {
+    const read = vi.fn(async () => detail('Todo'))
+    const client = { graphql: vi.fn() } as any
+
+    const result = await setStatus(client, board, snapshot, ref, 'In progress', {
+      read,
+      projectItemId: 'PVTI_supplied',
+      dryRun: true,
+    })
+
+    expect(client.graphql).not.toHaveBeenCalled()
+    expect(result.status).toBe('In progress')
+  })
 })
 
 // The spec names this guarantee explicitly: "Item claimed by another actor between board_next

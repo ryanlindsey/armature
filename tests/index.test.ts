@@ -248,7 +248,7 @@ describe('dispatch: dry runs disclose themselves', () => {
       create: vi.fn().mockResolvedValue({
         ref: { owner: 'acme', repo: 'web', number: 0 },
         id: '(dry-run)', title: 'A ticket', body: 'Body', state: 'OPEN',
-        status: null, projectItemId: '(dry-run)', parent: null, epic: null,
+        status: 'Todo', projectItemId: '(dry-run)', parent: null, epic: null,
       }),
     })
     const lines: string[] = []

@@ -64,7 +64,15 @@ describe('createItem', () => {
 // looked up by the option id the code sent, and the read-back reports that store: send the wrong
 // option id and the item stays unset, exactly as the real board would leave it.
 // ---------------------------------------------------------------------------------------------
-function fakeBoard(options: { failStatusWrite?: boolean } = {}) {
+function fakeBoard(
+  options: {
+    failStatusWrite?: boolean
+    /** Something else won the field: the write lands, the read-back shows another status. */
+    statusWriteLandsAs?: string
+    /** Replication lag: the board add succeeded, the issue's memberships do not show it yet. */
+    unreadableMembership?: boolean
+  } = {},
+) {
   let status: string | null = null
 
   const client = {
@@ -75,7 +83,10 @@ function fakeBoard(options: { failStatusWrite?: boolean } = {}) {
       }
       if (query.includes('updateProjectV2ItemFieldValue')) {
         if (options.failStatusWrite) throw new Error('status write failed')
-        status = snapshot.statusOptions.find((o) => o.id === variables.option)?.name ?? null
+        status =
+          options.statusWriteLandsAs ??
+          snapshot.statusOptions.find((o) => o.id === variables.option)?.name ??
+          null
         return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_1' } } }
       }
       return { repository: { id: 'R_1' } }
@@ -89,7 +100,7 @@ function fakeBoard(options: { failStatusWrite?: boolean } = {}) {
     body: input.body,
     state: 'OPEN' as const,
     status,
-    projectItemId: 'PVTI_1',
+    projectItemId: options.unreadableMembership ? null : 'PVTI_1',
     parent: null,
     epic: null,
   })
@@ -103,7 +114,13 @@ describe('createItem lands the item where work is found', () => {
 
     const created = await createItem(client, board, snapshot, input, { read })
 
-    const next = selectNext({ ...snapshot, items: [created] }, {})
+    // Selected from a re-read of the board, not from the object the tool handed back. Asserting
+    // on `created` is what makes this test miss: a createItem that performs no status write and
+    // returns `{ ...read(ref), status: todo }` passes it, which is the exact bug wearing the
+    // right answer as a hat. Verified by writing that implementation and watching this fail.
+    const onBoard = await read(created.ref)
+
+    const next = selectNext({ ...snapshot, items: [onBoard] }, {})
     expect(next.kind).toBe('item')
     expect((next as { item: { ref: unknown } }).item.ref).toEqual({
       owner: 'acme',
@@ -128,5 +145,32 @@ describe('createItem lands the item where work is found', () => {
     expect((err as Error).message).toContain('acme/web#42')
     expect((err as Error).message).toContain('item_status')
     expect((err as Error).message).toContain('status write failed')
+  })
+
+  // The status is exactly what is in doubt when this error is thrown, so the message may not
+  // settle it. Reporting "the item has no status" after a read-back that showed a status is the
+  // same class of error the tool is being fixed for: stating an effect nobody observed.
+  it('does not claim to know the status it just failed to confirm', async () => {
+    const { client, read } = fakeBoard({ statusWriteLandsAs: 'In progress' })
+
+    const err = await createItem(client, board, snapshot, input, { read }).catch((e: Error) => e)
+
+    expect(err).toBeInstanceOf(StatuslessItemError)
+    // The read-back saw "In progress". Whatever the message says, it cannot say there is none.
+    expect((err as Error).message).not.toMatch(/with no status/i)
+    expect((err as Error).message).toContain('In progress')
+  })
+
+  // The lag path. `createItem` now hands setStatus the id the board add returned, so the
+  // issue-rooted read that reports a just-added item as absent is out of the write path. If it
+  // ever comes back, this fails: telling someone to add an item that is already on the board
+  // sends them after a repair they do not need, which is what StatuslessItemError exists to stop.
+  it('never advises adding an item the board add already placed', async () => {
+    const { client, read } = fakeBoard({ failStatusWrite: true, unreadableMembership: true })
+
+    const err = await createItem(client, board, snapshot, input, { read }).catch((e: Error) => e)
+
+    expect(err).toBeInstanceOf(StatuslessItemError)
+    expect((err as Error).message).not.toMatch(/add it (deliberately|to the board)/i)
   })
 })
