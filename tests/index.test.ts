@@ -185,6 +185,79 @@ describe('dispatch: writes log the before/after status transition', () => {
   })
 })
 
+// A dry run's result describes an intended effect that was never written. Returned unmarked it is
+// indistinguishable from a real write, and a mutation log line asserting a transition that never
+// happened is worse than no line at all — the log is the forensic record. item_create already
+// disclosed this; every mutating tool must.
+describe('dispatch: dry runs disclose themselves', () => {
+  function claimingProvider() {
+    const getItem = vi.fn().mockResolvedValue({ ref: { owner: 'acme', repo: 'web', number: 5 }, status: 'Todo' })
+    const claim = vi.fn().mockResolvedValue({ ref: { owner: 'acme', repo: 'web', number: 5 }, status: 'In progress' })
+    const setStatus = vi.fn().mockResolvedValue({ ref: { owner: 'acme', repo: 'web', number: 5 }, status: 'Done' })
+    return makeProvider({ getItem, claim, setStatus })
+  }
+
+  it('marks a dry-run item_claim result', async () => {
+    const result = await dispatch(claimingProvider(), 'item_claim', { ref: 'acme/web#5' }, {
+      dryRun: true, logWrite: () => {},
+    })
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBe(true)
+  })
+
+  it('marks a dry-run item_status result', async () => {
+    const result = await dispatch(claimingProvider(), 'item_status', { ref: 'acme/web#5', status: 'Done' }, {
+      dryRun: true, logWrite: () => {},
+    })
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBe(true)
+  })
+
+  it('leaves a real item_claim result unmarked', async () => {
+    const result = await dispatch(claimingProvider(), 'item_claim', { ref: 'acme/web#5' }, {
+      dryRun: false, logWrite: () => {},
+    })
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBeUndefined()
+  })
+
+  it('marks the mutation log line of a dry-run claim, so the record never asserts a transition that did not happen', async () => {
+    const lines: string[] = []
+    await dispatch(claimingProvider(), 'item_claim', { ref: 'acme/web#5' }, {
+      dryRun: true, logWrite: (l) => lines.push(l),
+    })
+    expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+
+  it('marks the mutation log line of a dry-run status change', async () => {
+    const lines: string[] = []
+    await dispatch(claimingProvider(), 'item_status', { ref: 'acme/web#5', status: 'Done' }, {
+      dryRun: true, logWrite: (l) => lines.push(l),
+    })
+    expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+
+  it('marks a real write as not a dry run, so a reader never has to infer it from an absent field', async () => {
+    const lines: string[] = []
+    await dispatch(claimingProvider(), 'item_claim', { ref: 'acme/web#5' }, {
+      dryRun: false, logWrite: (l) => lines.push(l),
+    })
+    expect(JSON.parse(lines[0]!).dryRun).toBe(false)
+  })
+
+  it('marks a dry-run creation log line as well as its "(dry-run)" ref', async () => {
+    const provider = makeProvider({
+      create: vi.fn().mockResolvedValue({
+        ref: { owner: 'acme', repo: 'web', number: 0 },
+        id: '(dry-run)', title: 'A ticket', body: 'Body', state: 'OPEN',
+        status: null, projectItemId: '(dry-run)', parent: null, epic: null,
+      }),
+    })
+    const lines: string[] = []
+    await dispatch(provider, 'item_create', { repo: 'acme/web', title: 'A ticket', body: 'Body' }, {
+      dryRun: true, logWrite: (l) => lines.push(l),
+    })
+    expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+})
+
 describe('makeRefResolver', () => {
   const snapshotWithSiblings: BoardSnapshot = {
     ...snapshot,

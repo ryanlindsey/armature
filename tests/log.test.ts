@@ -15,6 +15,24 @@ describe('logMutation', () => {
     expect(entry.at).toBeTruthy()
   })
 
+  it('records that a dry-run line describes a transition that did not happen', () => {
+    const lines: string[] = []
+    logMutation(
+      { ref: 'acme/web#278', field: 'Status', before: 'Todo', after: 'In progress', dryRun: true },
+      (l) => lines.push(l),
+    )
+    expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+
+  it('states plainly that a real write was real, rather than leaving it to be inferred', () => {
+    const lines: string[] = []
+    logMutation(
+      { ref: 'acme/web#278', field: 'Status', before: 'Todo', after: 'In progress' },
+      (l) => lines.push(l),
+    )
+    expect(JSON.parse(lines[0]!).dryRun).toBe(false)
+  })
+
   it('never writes a credential', () => {
     const lines: string[] = []
     logMutation(

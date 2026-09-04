@@ -90,18 +90,26 @@ function ok(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] }
 }
 
+// Every mutating tool returns the state it means to leave behind. Under ARMATURE_DRY_RUN that
+// state was computed and never written, so returning it unmarked makes a dry run indistinguishable
+// from a real write — the caller sees "status: In progress" either way and has no way to tell
+// which happened. Applied to every mutation, not just item_create.
+function presentMutation<T extends object>(value: T, dryRun: boolean): unknown {
+  return dryRun ? { ...value, dryRun: true } : value
+}
+
 // A dry-run creation has no real issue number — items.ts reports that honestly with the string
 // "(dry-run)" for `id` and `projectItemId`, but `ref` is a structured WorkItemRef, and the only
 // way createItem can populate ref.number before the issue exists is 0. Rendered through
 // formatRef that reads as "acme/web#0", a plausible-looking real reference rather than a visible
 // placeholder. Once this crosses into a tool result a model or person can act on, that's a
 // hazard, not a quirk. Fixed here — not in items.ts, which is out of scope for this task — by
-// dropping `ref` from the dry-run response entirely and adding an explicit `dryRun: true` flag,
+// dropping `ref` from the dry-run response entirely, on top of the shared `dryRun: true` flag,
 // so there is no numeric or string stand-in that could be mistaken for a real item.
 function presentCreated<T extends { ref: unknown }>(created: T, dryRun: boolean): unknown {
   if (!dryRun) return created
   const { ref: _omittedDryRunRef, ...rest } = created
-  return { ...rest, dryRun: true }
+  return presentMutation(rest, true)
 }
 
 // `item_create` used to take a `parent`, resolve it through the alias resolver, and then throw it
@@ -217,10 +225,16 @@ export async function dispatch(
       const before = await provider.getItem(ref)
       const after = await provider.claim(ref)
       logMutation(
-        { ref: formatRef(ref), field: 'Status', before: before.status, after: after.status },
+        {
+          ref: formatRef(ref),
+          field: 'Status',
+          before: before.status,
+          after: after.status,
+          dryRun: options.dryRun,
+        },
         options.logWrite,
       )
-      return ok(after)
+      return ok(presentMutation(after, options.dryRun))
     }
 
     case 'item_status': {
@@ -228,10 +242,16 @@ export async function dispatch(
       const before = await provider.getItem(ref)
       const after = await provider.setStatus(ref, args.status!)
       logMutation(
-        { ref: formatRef(ref), field: 'Status', before: before.status, after: after.status },
+        {
+          ref: formatRef(ref),
+          field: 'Status',
+          before: before.status,
+          after: after.status,
+          dryRun: options.dryRun,
+        },
         options.logWrite,
       )
-      return ok(after)
+      return ok(presentMutation(after, options.dryRun))
     }
 
     case 'item_create': {
@@ -255,6 +275,7 @@ export async function dispatch(
           field: 'created',
           before: null,
           after: created.title,
+          dryRun: options.dryRun,
         },
         options.logWrite,
       )

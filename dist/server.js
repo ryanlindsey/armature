@@ -16919,7 +16919,8 @@ function logMutation(entry, write = (l) => process.stderr.write(l + "\n")) {
       ref: entry.ref,
       field: entry.field,
       before: entry.before,
-      after: entry.after
+      after: entry.after,
+      dryRun: entry.dryRun === true
     })
   );
 }
@@ -17488,10 +17489,13 @@ var TOOLS = [
 function ok(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
+function presentMutation(value, dryRun) {
+  return dryRun ? { ...value, dryRun: true } : value;
+}
 function presentCreated(created, dryRun) {
   if (!dryRun) return created;
   const { ref: _omittedDryRunRef, ...rest } = created;
-  return { ...rest, dryRun: true };
+  return presentMutation(rest, true);
 }
 var UnsupportedParentError = class extends Error {
   constructor() {
@@ -17546,20 +17550,32 @@ async function dispatch(provider, name, args, options) {
       const before = await provider.getItem(ref);
       const after = await provider.claim(ref);
       logMutation(
-        { ref: formatRef(ref), field: "Status", before: before.status, after: after.status },
+        {
+          ref: formatRef(ref),
+          field: "Status",
+          before: before.status,
+          after: after.status,
+          dryRun: options.dryRun
+        },
         options.logWrite
       );
-      return ok(after);
+      return ok(presentMutation(after, options.dryRun));
     }
     case "item_status": {
       const ref = await resolveRef(args.ref);
       const before = await provider.getItem(ref);
       const after = await provider.setStatus(ref, args.status);
       logMutation(
-        { ref: formatRef(ref), field: "Status", before: before.status, after: after.status },
+        {
+          ref: formatRef(ref),
+          field: "Status",
+          before: before.status,
+          after: after.status,
+          dryRun: options.dryRun
+        },
         options.logWrite
       );
-      return ok(after);
+      return ok(presentMutation(after, options.dryRun));
     }
     case "item_create": {
       if (args.parent !== void 0 && args.parent !== null) throw new UnsupportedParentError();
@@ -17578,7 +17594,8 @@ async function dispatch(provider, name, args, options) {
           ref: options.dryRun ? "(dry-run)" : formatRef(created.ref),
           field: "created",
           before: null,
-          after: created.title
+          after: created.title,
+          dryRun: options.dryRun
         },
         options.logWrite
       );
