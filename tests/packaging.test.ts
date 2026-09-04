@@ -211,6 +211,15 @@ describe('the commands declare the tools they actually use', () => {
     expect(fm).toMatch(/\bSkill\b/)
   })
 
+  // The loop's review step invokes superpowers:requesting-code-review, whose whole mechanic is
+  // dispatching a subagent. Claude Code accepts either name for that tool — the binary guards on
+  // `e !== "Agent" && e !== "Task"` — so declare both and the command works across versions.
+  it('/armature-next pre-approves the subagent dispatch its review step needs', () => {
+    const fm = frontmatter(readText('commands/armature-next.md'))
+    expect(fm).toMatch(/\bAgent\b/)
+    expect(fm).toMatch(/\bTask\b/)
+  })
+
   it('names the MCP server the plugin actually declares', () => {
     const plugin = read('.claude-plugin/plugin.json')
     expect(Object.keys(plugin.mcpServers)).toEqual(['armature'])
@@ -245,9 +254,13 @@ const SUPERPOWERS_CHAIN = [
   'superpowers:finishing-a-development-branch',
 ]
 
+// Anchored on the whole heading, not a substring: a substring match would silently start reading
+// a different section the moment a heading like "## Using the skill" appeared above "## Skill" —
+// a false green in the very tests meant to catch drift.
 function section(markdown: string, heading: string): string {
-  const match = new RegExp(`^#{2,3} .*${heading}.*$`, 'im').exec(markdown)
-  expect(match, `expected a heading matching /${heading}/`).not.toBeNull()
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`^#{2,3} +${escaped} *$`, 'm').exec(markdown)
+  expect(match, `expected a heading exactly "## ${heading}"`).not.toBeNull()
   const rest = markdown.slice(match!.index + match![0].length)
   const next = /^#{2,3} /m.exec(rest)
   return next ? rest.slice(0, next.index) : rest
@@ -268,21 +281,39 @@ describe('the skill composes with Superpowers rather than reimplementing it', ()
   })
 
   // That skill's Step 4 offers "1. Merge back to <base-branch> locally" first, which contradicts
-  // armature's central rule. Its option 2 — push, open the PR, keep the worktree — is armature's
-  // own step, so the two compose only if the menu is never asked.
+  // armature's central rule, so the menu must never be asked. But it presents *two* menus: on a
+  // detached HEAD the options are only "1. Push as new branch and create a Pull Request" and
+  // "2. Keep as-is". Pre-selecting by ordinal picks "Keep as-is" there — nothing pushed, no PR,
+  // and step 10 then reports a link that does not exist. Name the option by its text.
   it('refuses finishing-a-development-branch its merge option', () => {
     const rules = section(skill, 'Rules')
     expect(rules).toMatch(/finishing-a-development-branch/)
-    expect(rules).toMatch(/option 2/i)
+    expect(rules, 'names the option by text').toMatch(/create a Pull Request/i)
+    expect(rules, 'covers the detached-HEAD menu too').toMatch(/detached/i)
     expect(rules).toMatch(/menu/i)
   })
 
-  it('gives an install without Superpowers a fallback for every link in the chain', () => {
+  // The hazard explanation belongs in Rules; the loop is what gets followed literally. An ordinal
+  // there is the same detached-HEAD trap by another route, and fixing only the rule leaves it.
+  it('pre-selects that option by text in the loop too, never by ordinal', () => {
+    const loop = section(skill, 'The loop')
+    expect(loop, 'the loop must name the option').toMatch(/pull request/i)
+    expect(loop, 'the loop must not pre-select by ordinal').not.toMatch(/option \d/i)
+  })
+
+  // The loop declares which steps it delegates. Every one of them must have a fallback row, keyed
+  // by the same number — otherwise an install without Superpowers hits a step with no instructions.
+  it('gives an install without Superpowers a fallback for every step it delegates', () => {
+    const declared = /Steps? ([\d,\s and]+?) belong to Superpowers/i.exec(section(skill, 'The loop'))
+    expect(declared, 'the loop must declare which steps Superpowers owns').not.toBeNull()
+
+    const steps = declared![1]!.match(/\d+/g) ?? []
+    expect(steps.length, 'expected at least one delegated step').toBeGreaterThan(0)
+
     const fallback = section(skill, 'Without Superpowers')
-    expect(fallback, 'isolation fallback').toMatch(/branch/i)
-    expect(fallback, 'TDD fallback').toMatch(/test/i)
-    expect(fallback, 'review fallback').toMatch(/review/i)
-    expect(fallback, 'finish fallback').toMatch(/pull request|\bPR\b/)
+    for (const step of steps) {
+      expect(fallback, `no fallback row for step ${step}`).toMatch(new RegExp(`^\\| ${step}\\.`, 'm'))
+    }
   })
 })
 
@@ -299,14 +330,60 @@ describe('the README surfaces the Superpowers relationship above the fold', () =
     expect(readme).toMatch(/^## .*Superpowers.*$/im)
   })
 
-  it('traces one run, labelling which layer owns each step', () => {
-    const trace = section(readme, 'Superpowers')
+  it('puts that section immediately after Install', () => {
+    const headings = [...readme.matchAll(/^## .+$/gm)].map((m) => m[0])
+    const install = headings.indexOf('## Install')
+    expect(install, 'README has no ## Install heading').toBeGreaterThan(-1)
+    expect(headings[install + 1]).toMatch(/Superpowers/)
+  })
+
+  it('traces one run, naming both the armature tools and the Superpowers skills', () => {
+    const trace = section(readme, 'Better with Superpowers')
     for (const name of SUPERPOWERS_CHAIN) {
       expect(trace, `trace omits ${name}`).toContain(name.replace('superpowers:', ''))
     }
-    for (const tool of ['board_next', 'item_claim', 'item_status']) {
+    for (const tool of ['board_next', 'item_get', 'item_claim', 'item_status']) {
       expect(trace, `trace omits ${tool}`).toContain(tool)
     }
+  })
+
+  // The point of the trace is the attribution, not the list of names — a prose paragraph naming
+  // all of them would satisfy the test above while showing nobody which layer owns what.
+  it('labels every row of the trace with the layer that owns it', () => {
+    const rows = section(readme, 'Better with Superpowers')
+      .split('\n')
+      .filter((line) => /^\s*\d+\s/.test(line))
+
+    expect(rows.length, 'expected a numbered trace').toBeGreaterThanOrEqual(9)
+    for (const row of rows) {
+      expect(row, `trace row is unattributed: ${row}`).toMatch(/\barmature\b|\bSuperpowers\b/)
+    }
+  })
+
+  // The spec's thesis is that prose duplicated N times rots in N directions. A trace in the README
+  // and a loop in the skill that must stay numerically aligned are exactly that risk, so CI owns
+  // the alignment rather than two documents a human keeps in step by hand.
+  it('traces the same steps the skill loops over, numbered the same way', () => {
+    const loop = section(readText('skills/working-the-board/SKILL.md'), 'The loop')
+    const steps = [...loop.matchAll(/^(\d+)\. \*\*/gm)].map((m) => m[1])
+    const rows = [...section(readme, 'Better with Superpowers').matchAll(/^\s*(\d+)\s{2,}/gm)].map(
+      (m) => m[1],
+    )
+
+    expect(steps.length, 'the skill must number its loop').toBeGreaterThan(0)
+    expect(rows).toEqual(steps)
+  })
+
+  it('cites the delegated step numbers the skill actually uses', () => {
+    const loop = section(readText('skills/working-the-board/SKILL.md'), 'The loop')
+    const declared = /Steps? ([\d,\s and]+?) belong to Superpowers/i.exec(loop)
+    expect(declared, 'the loop must declare which steps Superpowers owns').not.toBeNull()
+
+    const cited = /standing in for steps? ([\d,\s and]+?)[—.]/i.exec(
+      section(readme, 'Better with Superpowers'),
+    )
+    expect(cited, 'the README must cite the steps its fallback sentence defers to').not.toBeNull()
+    expect(cited![1]!.match(/\d+/g)).toEqual(declared![1]!.match(/\d+/g))
   })
 
   // One statement of the relationship, not two that rot in different directions — the same

@@ -1,7 +1,7 @@
 ---
 description: Work the next actionable item on the board, on a branch, ending in a PR
 argument-hint: "[owner/repo#number or issue URL]"
-allowed-tools: mcp__plugin_armature_armature__*, Skill, Bash(git:*), Bash(npm:*), Bash(gh pr:*), Read, Edit, Write, Grep, Glob
+allowed-tools: mcp__plugin_armature_armature__*, Skill, Agent, Task, Bash(git:*), Bash(npm:*), Bash(gh pr:*), Read, Edit, Write, Grep, Glob
 ---
 
 Use the `armature:working-the-board` skill.

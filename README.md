@@ -32,25 +32,29 @@ One `/armature-next` run then crosses both plugins. Armature brackets the work �
 verifies and hands back; Superpowers does everything in between:
 
 ```
- 1  armature      board_next                       picks pixelsonly/apex#278, and says why it won
- 2  armature      item_get                         reads it — and its epic, which lives in
-                                                     pixelsonly/race-engineer, not apex
- 3  armature      item_claim                       → In Progress, verified before and after
- 4  Superpowers   using-git-worktrees              an isolated worktree, green baseline
- 5  Superpowers   test-driven-development          red → green → refactor
- 6  Superpowers   requesting-code-review           a fresh subagent reads the diff
- 7  armature      verify                           the .armature.json verify list
- 8  Superpowers   finishing-a-development-branch   pushes, opens the PR — never merges
- 9  armature      item_status                      → the board's review status
+  1  armature     board_next                       picks pixelsonly/apex#278, with its reason
+  2  armature     item_get                         reads it — its epic is in race-engineer
+  3  armature     prerequisites                    a stated "Depends on" stops the claim
+  4  armature     item_claim                       → In Progress, verified either side
+  5  Superpowers  using-git-worktrees              an isolated worktree, green baseline
+  6  Superpowers  test-driven-development          red → green → refactor
+  7  Superpowers  requesting-code-review           a fresh subagent reads the diff
+  8  armature     verify                           runs the .armature.json verify list
+  9  Superpowers  finishing-a-development-branch   pushes and opens the pull request
+ 10  armature     item_status                      → the board's review status
 ```
 
 Step 2 is the reason armature exists. `#278` names a different issue in every repository on the
 board, and the epic for apex's `#278` is a `race-engineer` number that means something else in apex.
 Every reference in and out is qualified for exactly that reason.
 
-Armature reimplements none of Superpowers and requires none of it. Without it the same nine steps
+Step 9 is where the two plugins have to be told apart. `finishing-a-development-branch` offers to
+merge the branch locally; armature takes its push-and-open-a-PR option instead and never asks. The
+never-merge rule is armature's, not that skill's — a human merges.
+
+Armature reimplements none of Superpowers and requires none of it. Without it the same ten steps
 run, with a plain feature branch, a hand-written failing test, a re-read of the diff, and
-`gh pr create` standing in for steps 4, 5, 6 and 8 — the skill's
+`gh pr create` standing in for steps 5, 6, 7 and 9 — the skill's
 [Without Superpowers](./skills/working-the-board/SKILL.md#without-superpowers) table says which.
 
 ## Configuration
@@ -120,8 +124,8 @@ refused, and armature never emits one.
 `working-the-board` is the judgment layer on top of the tools: choose, read, claim, isolate,
 implement, review, verify, open a PR, hand back — and it never merges. It composes with Superpowers
 where that is installed and falls back to plain instructions where it is not, as
-[above](#better-with-superpowers). Either way it refuses to fall back to raw `gh` commands if the
-armature tools are unavailable — it stops and says so.
+[above](#better-with-superpowers). Either way it refuses to fall back to raw `gh` commands to read
+or write the board if the armature tools are unavailable — it stops and says so.
 
 ## License
 

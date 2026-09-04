@@ -21,16 +21,17 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    not this one.
 3. **Check its prerequisites.** See the prerequisite rule below. Do this before claiming, not after.
 4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
-5. **Isolate.** Use `superpowers:using-git-worktrees`.
+5. **Isolate.** Use `superpowers:using-git-worktrees`. It asks before creating a worktree unless a
+   preference is already on record; that question is the human's to answer, so let it be asked.
 6. **Implement.** Use `superpowers:test-driven-development` — the failing test first, watched
    failing, then the implementation.
 7. **Review.** Use `superpowers:requesting-code-review`. Fix Critical and Important findings before
    the PR exists; carry Minor ones into the PR body so the human reviewer sees them.
 8. **Verify.** Run every command in this repository's `.armature.json` `verify` list. If there is no
    such list, run the project's test suite.
-9. **Open a PR.** Use `superpowers:finishing-a-development-branch`, taking its option 2 — push and
-   open the pull request. Title is a Conventional Commit. Body contains `Closes #<number>`.
-   **Do not merge.**
+9. **Open a PR.** Use `superpowers:finishing-a-development-branch`, taking the option that pushes
+   and creates a pull request — by its text, never its number; see the rule below. Title is a
+   Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
 10. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
     Report the PR link and STOP.
 
@@ -61,8 +62,13 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   If any of them is not in the board's done status, say which item is waiting on which, and STOP
   without claiming. The server does not check prerequisites — it reports facts and effects, and
   "this should wait" is a judgment — so this rule is the only place that check exists.
-- **`finishing-a-development-branch` does not get to ask its menu.** That skill's first option is
-  "Merge back to `<base-branch>` locally", and armature never merges. Its option 2 — push, open the
-  PR, keep the worktree — is step 9 exactly, so take option 2 and skip the question. Keep the
-  worktree; the human iterates on review feedback there.
+- **`finishing-a-development-branch` does not get to ask its menu.** Take the option whose text is
+  **push and create a Pull Request**, and skip the question. Name it by its text, never its number:
+  that skill shows a different menu on a detached HEAD — the state `using-git-worktrees` reports for
+  an externally managed worktree — where the numbering shifts and option 2 is instead "Keep as-is",
+  which pushes nothing and opens no PR while step 10 goes on to report a review status and a link
+  that does not exist. Never take the standard menu's first option, a local merge: armature never
+  merges. Keep the worktree; the human iterates on review feedback there. That skill also asks which
+  branch the work split from — answer with the repository's default branch — and re-runs the suite
+  step 8 has just run, which is wasteful but harmless.
 - **Never merge.** Armature opens PRs; people merge them.
