@@ -17531,7 +17531,7 @@ function selectNext(snapshot, options) {
 }
 
 // server/version.ts
-var VERSION = "0.2.2";
+var VERSION = "0.3.0";
 
 // server/index.ts
 var DRY_RUN = process.env.ARMATURE_DRY_RUN === "1";
