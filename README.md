@@ -2,7 +2,7 @@
 
 A Claude Code plugin that drives epics and tickets across many repositories from one GitHub
 Projects board, over a typed MCP tool surface — so "what's next" and "close this out" have one
-implementation instead of a slash command copy-pasted into every repo.
+implementation that means the same thing in every repository on the board.
 
 [Superpowers](https://github.com/obra/superpowers) models one repository, one worktree, one branch —
 and none of its skills knows what a ticket is. Armature is the layer above: it decides which work is
@@ -32,8 +32,8 @@ One `/armature-next` run then crosses both plugins. Armature brackets the work �
 verifies and hands back; Superpowers does everything in between:
 
 ```
-  1  armature     board_next                       picks pixelsonly/apex#278, with its reason
-  2  armature     item_get                         reads it — its epic is in race-engineer
+  1  armature     board_next                       picks acme/checkout#278, with its reason
+  2  armature     item_get                         reads it — its epic is in acme/platform
   3  armature     prerequisites                    a stated "Depends on" stops the claim
   4  armature     item_claim                       → In Progress, verified either side
   5  Superpowers  using-git-worktrees              an isolated worktree, green baseline
@@ -45,8 +45,8 @@ verifies and hands back; Superpowers does everything in between:
 ```
 
 Step 2 is the reason armature exists. `#278` names a different issue in every repository on the
-board, and the epic for apex's `#278` is a `race-engineer` number that means something else in apex.
-Every reference in and out is qualified for exactly that reason.
+board, and the epic for `acme/checkout#278` is an `acme/platform` number that means something else
+in checkout. Every reference in and out is qualified for exactly that reason.
 
 Step 9 is where the two plugins have to be told apart. `finishing-a-development-branch` offers to
 merge the branch locally; armature takes its push-and-open-a-PR option instead and never asks. The
