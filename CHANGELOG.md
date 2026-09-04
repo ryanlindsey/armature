@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/ryanlindsey/armature/compare/armature-v0.2.1...armature-v0.2.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* name the classic token in the missing-credential message ([#12](https://github.com/ryanlindsey/armature/issues/12)) ([6fac927](https://github.com/ryanlindsey/armature/commit/6fac927ac0e3e457f9ec36bd4480840fca5c2412))
+
 ## [0.2.1](https://github.com/ryanlindsey/armature/compare/armature-v0.2.0...armature-v0.2.1) (2026-09-04)
 
 
