@@ -60,6 +60,18 @@ describe('resolveCredential', () => {
     expect((err as Error).message).not.toMatch(/GITHUB_PAT|GH_ENTERPRISE_TOKEN/)
   })
 
+  // The message is the only place a user is told which kind of token to make, and the answer is
+  // not guessable: a fine-grained PAT looks like the more careful choice, offers a Projects
+  // permission under repository and organization headings, and still cannot read a user-owned
+  // board — the API calls that "Resource not accessible by personal access token", which reads
+  // like a scope that was forgotten rather than one that does not exist.
+  it('names the kind of token that can actually reach a user-owned board', async () => {
+    const err = await resolveCredential({ readCliToken: noCli, env: {} }).catch((e: Error) => e)
+
+    expect((err as Error).message).toContain('classic')
+    expect((err as Error).message).toMatch(/fine-grained/)
+  })
+
   it('never carries a credential it did not choose into the result', async () => {
     const chosen = 'ghp_chosen_0123456789'
     const shadowed = 'ghp_shadowed_SECRET_0123456789'
