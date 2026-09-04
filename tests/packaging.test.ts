@@ -35,7 +35,7 @@ describe('packaging', () => {
 
 // The versions above are pinned equal to each other, and release-please only bumps package.json
 // and the manifest by default. Without extra-files a release would move package.json and leave
-// the other three behind — failing the very first test in this file, and shipping a bundle whose
+// the others behind — failing the very first test in this file, and shipping a bundle whose
 // embedded VERSION disagrees with the plugin a user installed.
 describe('release-please updates every file the version check pins together', () => {
   const config = read('release-please-config.json')
@@ -72,14 +72,47 @@ describe('release-please updates every file the version check pins together', ()
   it('marks the version line in server/version.ts for the generic updater', () => {
     expect(readText('server/version.ts')).toContain('x-release-please-version')
   })
+
+  // dist/server.js is the one declaration release-please cannot regenerate from source, and the
+  // only one CI rebuilds and diffs. Covering it here is what lets a release PR be green on its
+  // first run instead of opening stale and needing a rebuilt bundle pushed on top of it.
+  it('covers dist/server.js, the built copy nothing else can bump', () => {
+    expect(pathsOf()).toContain('dist/server.js')
+  })
 })
 
-// extra-files covers server/version.ts, but not the bundle built from it: esbuild inlines VERSION
-// as a bare literal and strips the annotation comment, so there is no marker left for a `generic`
-// updater to find. Only a rebuild closes that gap. Without one the release PR carries a bundle
-// reporting the previous version, and CI's "bundle is current" step fails on the release commit
-// itself — the one commit that must be green.
-describe('the release workflow rebuilds the bundle release-please cannot patch', () => {
+// esbuild inlines VERSION as a bare literal and drops the annotation comment, so a plain bundle
+// offers the generic updater nothing to find. The build re-attaches the marker, which is the only
+// reason the extra-file above does anything. These assert on the committed artifact rather than on
+// esbuild.config.mjs: what release-please reads at release time is the file on the branch, and a
+// build that quietly stopped annotating would leave it unmarked, unbumped, and green here.
+describe('the committed bundle is markable by the generic updater', () => {
+  const marked = readText('dist/server.js').match(/^.*x-release-please-version.*$/gm) ?? []
+
+  // Exactly one. Zero is the silent failure the annotation exists to prevent; a second marked
+  // line would be a second place to keep in step, which is the problem this file is about.
+  it('marks exactly one line for the generic updater', () => {
+    expect(marked).toHaveLength(1)
+  })
+
+  it('marks the line carrying the inlined version', () => {
+    expect(marked[0]).toMatch(/^var VERSION = "\d+\.\d+\.\d+"; \/\/ x-release-please-version$/)
+  })
+
+  // Catches a stale bundle at test time. CI catches it too, by rebuilding and diffing, but only
+  // after a full install and build — and on a release PR that check used to be expected to fail.
+  it('embeds the same version every other declaration is pinned to', () => {
+    expect(marked[0]).toContain(`"${VERSION}"`)
+  })
+})
+
+// The rebuild used to live here as a second job: check out the release branch, rebuild the bundle,
+// push it back. It worked, but it made every release PR red on its first CI run — the branch was
+// opened with a stale bundle and only went green once the push landed — and it had a failure mode
+// that did not self-heal, since a push that failed left the PR merge-ready with a stale bundle and
+// nothing but a red job in the Actions tab to say so. Marking the bundle removes the job outright:
+// release-please bumps dist/server.js in the same commit as everything else.
+describe('the release workflow leaves the bundle to release-please', () => {
   const release = readText('.github/workflows/release.yml')
 
   it('runs release-please', () => {
@@ -93,27 +126,19 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
     expect(release).toContain('.release-please-manifest.json')
   })
 
-  // Authority comes from the ryanlindsey-bot app installation now, not from the workflow token.
-  // That moves the easy-to-omit thing rather than removing it: a step that is not handed the
-  // minted token falls back to a GITHUB_TOKEN granted nothing, which fails at run time rather
-  // than at review time — the same trap the old per-job `permissions:` block set. So both
-  // consumers are asserted: release-please, and the checkout whose stored credential does the
-  // push. The app's own installation permissions (contents, pull-requests, issues) cannot be
-  // checked from in here; they are documented at the top of the workflow.
-  it('mints an app token and hands it to both consumers', () => {
+  // Authority comes from the ryanlindsey-bot app installation, not from the workflow token. That
+  // moves the easy-to-omit thing rather than removing it: a step not handed the minted token falls
+  // back to a GITHUB_TOKEN granted nothing, which fails at run time rather than at review time.
+  // The app's own installation permissions cannot be checked from in here; they are documented at
+  // the top of the workflow.
+  it('mints an app token and hands it to release-please', () => {
     expect(release).toMatch(/actions\/create-github-app-token@v\d/)
     expect(release).toMatch(/client-id:\s*\$\{\{\s*secrets\.BOT_APP_CLIENT_ID\s*\}\}/)
     // The deprecated input, not merely absent from the assertions above: passing it still works
     // and still warns, so nothing else would notice a revert.
     expect(release, 'app-id is deprecated in favour of client-id').not.toMatch(/^\s*app-id:/m)
     expect(release).toMatch(/private-key:\s*\$\{\{\s*secrets\.BOT_APP_PRIVATE_KEY\s*\}\}/)
-    expect(release.match(/steps\.app-token\.outputs\.token/g)).toHaveLength(2)
-  })
-
-  // A token routed from one job to another through `outputs:` is written into the run unmasked,
-  // so each job mints its own from the same secrets.
-  it('mints the token in each job rather than routing it through job outputs', () => {
-    expect(release.match(/actions\/create-github-app-token@v\d/g)).toHaveLength(2)
+    expect(release.match(/steps\.app-token\.outputs\.token/g)).toHaveLength(1)
   })
 
   // The counterpart to the above: nothing is left leaning on the workflow token, so a dropped
@@ -123,32 +148,24 @@ describe('the release workflow rebuilds the bundle release-please cannot patch',
     expect(release).not.toMatch(/contents:\s*write/)
   })
 
-  it('rebuilds the bundle and commits it', () => {
-    expect(release).toContain('npm run build')
-    expect(release).toMatch(/git add .*dist\/server\.js/)
+  // The whole point of the marker is that no second actor writes to the release branch. Re-adding
+  // a job that does brings back both the red first CI run and the push that fails in silence.
+  it('never writes to the release branch itself', () => {
+    expect(release).not.toContain('git push')
+    expect(release).not.toContain('git commit')
+    expect(release).not.toContain('headBranchName')
   })
 
-  // The rebuild belongs on the release branch. Pushing it straight to main would leave the release
-  // PR still stale and put an unreviewed commit on the branch the tag is cut from. The refspec is
-  // spelled out rather than left to a bare `git push`, which would depend on checkout having set
-  // upstream tracking — and would fail at release time, the worst moment to find out.
-  it('pushes onto the release branch rather than main', () => {
-    expect(release).toContain('headBranchName')
-    expect(release).toMatch(/git push origin ["']?HEAD:/)
+  // A token routed between jobs through `outputs:` is written into the run unmasked. With the
+  // rebuild gone there is one job and nothing to route — pinned so the next job added here has to
+  // mint its own rather than reach for this one's.
+  it('routes nothing through job outputs', () => {
+    expect(release).not.toMatch(/^\s*outputs:/m)
   })
 
-  // A PR opened by the app does trigger `pull_request`, so ci.yml now runs against the release PR
-  // — it did not under GITHUB_TOKEN, when this job was the only signal before the merge that cuts
-  // the tag. These steps stay as the gate on this job's own push, so a failing tree never gets a
-  // rebuilt bundle committed on top of it.
-  it('typechecks and tests the bumped tree before pushing to it', () => {
-    expect(release).toContain('npm run typecheck')
-    expect(release).toContain('npm test')
-  })
-
-  // The rebuild is only worth doing because CI enforces that the bundle matches its source. If
-  // that check ever goes, revisit this job rather than leaving it running for a reason that no
-  // longer holds.
+  // The marker is only worth maintaining because CI enforces that the committed bundle matches its
+  // source. If that check ever goes, revisit the annotation rather than leaving the build
+  // decorating a file nothing verifies.
   it('serves a check CI still makes', () => {
     expect(readText('.github/workflows/ci.yml')).toContain('git diff --exit-code dist/server.js')
   })

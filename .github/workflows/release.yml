@@ -2,8 +2,8 @@ name: release
 on:
   push: { branches: [main] }
 
-# Both jobs authenticate as the ryanlindsey-bot GitHub App rather than as the workflow's own
-# token, so GITHUB_TOKEN is left with nothing granted and no job asks for anything back.
+# The job authenticates as the ryanlindsey-bot GitHub App rather than as the workflow's own token,
+# so GITHUB_TOKEN is left with nothing granted and nothing asks for anything back.
 #
 # ryanlindsey-bot must be installed on this repo with repository permissions Contents: write,
 # Pull requests: write and Issues: write. Issues is the non-obvious one: release-please creates
@@ -15,13 +15,7 @@ permissions: {}
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    outputs:
-      pr: ${{ steps.release.outputs.pr }}
     steps:
-      # Each job mints its own installation token instead of one job minting and passing it on.
-      # Job outputs are not masked, so a token handed between jobs is written into the run in
-      # plain text; minted in place it stays a redacted secret in the log.
-      #
       # `client-id`, not `app-id`: v3 of the action deprecates the numeric App ID in favour of the
       # app's Client ID, and warns on every run that still passes it. They are different values on
       # the same settings page and neither is secret, but a swap between them fails at mint time.
@@ -31,61 +25,20 @@ jobs:
           client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
           private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v4
-        id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # release-please bumps server/version.ts through its extra-files, but it cannot touch the bundle
-  # built from it: esbuild inlines VERSION as a bare literal and strips the annotation comment, so
-  # there is no marker left for a `generic` updater to find. Left alone, the release PR carries a
-  # bundle reporting the previous version and CI's "bundle is current" step fails on the release
-  # commit itself. So rebuild it here, on the release branch, before anyone merges.
-  #
-  # A later push to main makes release-please force-push the branch, discarding this commit — but
-  # that same push runs this job again and puts it back, so the branch converges. What does not
-  # self-heal is a push failing here: the PR is then merge-ready with a stale bundle, and the only
-  # warning is this job going red in the Actions tab.
-  bundle:
-    needs: release-please
-    if: needs.release-please.outputs.pr
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/create-github-app-token@v3
-        id: app-token
-        with:
-          client-id: ${{ secrets.BOT_APP_CLIENT_ID }}
-          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
-          # Checking out with the app token leaves it as the stored push credential for the final
-          # step, and makes that push arrive as the app — which is what re-triggers ci.yml.
-          token: ${{ steps.app-token.outputs.token }}
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - run: npm ci
-      # A release PR opened by the app does trigger `pull_request`, so ci.yml now runs against it;
-      # under GITHUB_TOKEN it never did, and these steps were the bumped tree's only check. They
-      # stay as the gate on this job's own push, so a failing tree does not get a rebuilt bundle
-      # committed on top of it. Expect ci.yml to be red on the PR until the push below lands: the
-      # branch is opened with a stale bundle, and that push is what makes it current.
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - name: commit the rebuilt bundle
-        # The branch reaches the script through the environment rather than by interpolation, so a
-        # branch name is never spliced into the shell.
-        env:
-          BRANCH: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
-        run: |
-          if git diff --quiet -- dist/server.js; then
-            echo 'bundle already current'
-            exit 0
-          fi
-          git config user.name 'ryanlindsey-bot[bot]'
-          git config user.email '324957459+ryanlindsey-bot[bot]@users.noreply.github.com'
-          git add dist/server.js
-          git commit -m 'chore: rebuild dist/server.js for the release'
-          git push origin "HEAD:$BRANCH"
+# There was a second job here once. dist/server.js is committed and embeds the version, and
+# release-please could not patch it: esbuild inlined VERSION as a bare literal and stripped the
+# annotation its `generic` updater looks for. So the job checked out the release branch, rebuilt
+# the bundle and pushed it back — which worked, but meant every release PR opened with a stale
+# bundle, failed ci.yml's "bundle is current" step, and only went green on the second run after
+# the push landed. Worse, that push was the single point of failure nothing watched: if it failed,
+# the PR sat merge-ready with a stale bundle and the only warning was a red job in the Actions tab.
+#
+# esbuild.config.mjs now re-attaches the marker after bundling, and release-please-config.json
+# lists dist/server.js as an extra-file. The bundle is bumped in the same commit as everything
+# else, ci.yml is green on the release PR's first run, and no second actor writes to the branch.
+# If that ever regresses, the fix belongs in the build's annotation step — not in a job here.
