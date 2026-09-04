@@ -2,25 +2,34 @@ name: release
 on:
   push: { branches: [main] }
 
-# The repository's default workflow token is read-only, so every permission this needs is asked
-# for per job rather than inherited.
+# Both jobs authenticate as the ryanlindsey-bot GitHub App rather than as the workflow's own
+# token, so GITHUB_TOKEN is left with nothing granted and no job asks for anything back.
+#
+# ryanlindsey-bot must be installed on this repo with repository permissions Contents: write,
+# Pull requests: write and Issues: write. Issues is the non-obvious one: release-please creates
+# and applies its own `autorelease:` labels, which is label writing on an issue rather than on a
+# pull request. A missing app permission fails the same way the missing job permission used to —
+# at run time, not at review time.
 permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      # release-please creates and applies its own `autorelease:` labels, which is label writing
-      # on an issue, not on a pull request. Omitting this fails at run time, not at review time.
-      issues: write
     outputs:
       pr: ${{ steps.release.outputs.pr }}
     steps:
+      # Each job mints its own installation token instead of one job minting and passing it on.
+      # Job outputs are not masked, so a token handed between jobs is written into the run in
+      # plain text; minted in place it stays a redacted secret in the log.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -38,18 +47,26 @@ jobs:
     needs: release-please
     if: needs.release-please.outputs.pr
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v4
         with:
           ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          # Checking out with the app token leaves it as the stored push credential for the final
+          # step, and makes that push arrive as the app — which is what re-triggers ci.yml.
+          token: ${{ steps.app-token.outputs.token }}
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - run: npm ci
-      # Pull requests opened by GITHUB_TOKEN do not trigger `pull_request` workflows, so ci.yml
-      # never runs against the release PR. These two steps are the only check the bumped tree gets
-      # before the merge that cuts the tag.
+      # A release PR opened by the app does trigger `pull_request`, so ci.yml now runs against it;
+      # under GITHUB_TOKEN it never did, and these steps were the bumped tree's only check. They
+      # stay as the gate on this job's own push, so a failing tree does not get a rebuilt bundle
+      # committed on top of it. Expect ci.yml to be red on the PR until the push below lands: the
+      # branch is opened with a stale bundle, and that push is what makes it current.
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -63,8 +80,8 @@ jobs:
             echo 'bundle already current'
             exit 0
           fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name 'ryanlindsey-bot[bot]'
+          git config user.email '324957459+ryanlindsey-bot[bot]@users.noreply.github.com'
           git add dist/server.js
           git commit -m 'chore: rebuild dist/server.js for the release'
           git push origin "HEAD:$BRANCH"
