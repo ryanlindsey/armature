@@ -242,7 +242,22 @@ export async function setStatus(
   snapshot: BoardSnapshot,
   ref: WorkItemRef,
   status: string,
-  options: { expectStatus?: string; dryRun?: boolean; read?: ItemReader } = {},
+  options: {
+    expectStatus?: string
+    dryRun?: boolean
+    read?: ItemReader
+    /**
+     * The board item's id, for a caller that already holds the one GitHub just returned —
+     * `createItem` is handed it by `addProjectV2ItemById`. Supplying it skips the read that
+     * would otherwise re-derive an id the caller has, and which can be wrong: that read is
+     * issue-rooted, so an add too recent to appear in the issue's project memberships reads as
+     * "not on the board" for an item that is. Never skips the read-back that verifies the write.
+     *
+     * Refused together with `expectStatus`, which has nothing to compare without that read — a
+     * staleness check silently skipped is worse than one that was never asked for.
+     */
+    projectItemId?: string
+  } = {},
 ): Promise<ItemDetail> {
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
 
@@ -252,18 +267,33 @@ export async function setStatus(
     throw new Error(`This board has no status "${status}". It offers: ${names}.`)
   }
 
-  const before = await read(ref)
-  if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
-
-  if (options.expectStatus !== undefined && before.status !== options.expectStatus) {
-    throw new StaleItemError(ref, options.expectStatus, before.status)
+  if (options.projectItemId !== undefined && options.expectStatus !== undefined) {
+    throw new Error(
+      `setStatus cannot check that ${formatRef(ref)} is still "${options.expectStatus}" when it ` +
+        `is given a projectItemId: the check reads the item, and supplying the id is what skips ` +
+        `that read. Ask for one or the other.`,
+    )
   }
 
-  if (options.dryRun) return { ...before, status }
+  // A dry run always takes the reading path, whether or not an id was supplied: it has to report
+  // the item as it stands, and nothing below this line may run without a read that returned.
+  let itemId = options.projectItemId
+  if (itemId === undefined || options.dryRun) {
+    const before = await read(ref)
+    if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
+
+    if (options.expectStatus !== undefined && before.status !== options.expectStatus) {
+      throw new StaleItemError(ref, options.expectStatus, before.status)
+    }
+
+    if (options.dryRun) return { ...before, status }
+
+    itemId = before.projectItemId
+  }
 
   await client.graphql(SET_STATUS, {
     project: snapshot.id,
-    item: before.projectItemId,
+    item: itemId,
     field: snapshot.statusFieldId,
     option: option.id,
   })
@@ -297,6 +327,27 @@ export class OrphanedIssueError extends Error {
   }
 }
 
+// The half-landing that OrphanedIssueError does not describe. Both mean "created, then something
+// failed", but they leave the board in different states and want different repairs: an orphan is
+// off the board entirely, while this item is on it and its status is the part in doubt. Telling
+// a reader to "add it to the board" here would send them after a problem they do not have.
+//
+// Which is why the message stops at what armature did and does not say where the status ended
+// up. This error is thrown precisely when that write could not be confirmed — the cause may be a
+// refused mutation, or a read-back showing some other status entirely — and a sentence asserting
+// "the item has no status" would be the same unobserved claim the tool is being fixed for. It
+// names the read that settles it instead.
+export class StatuslessItemError extends Error {
+  constructor(ref: WorkItemRef, status: string, cause: string) {
+    super(
+      `Created ${formatRef(ref)} and added it to the board, but could not set its status to ` +
+        `"${status}": ${cause} Its status is unconfirmed, so board_next may not return it. ` +
+        `Read it with item_get, set it with item_status, or close the issue.`,
+    )
+    this.name = 'StatuslessItemError'
+  }
+}
+
 const REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`
 
 const CREATE_ISSUE = `
@@ -319,15 +370,19 @@ export async function createItem(
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
   const ref = { owner: input.owner, repo: input.repo, number: 0 }
 
-  // The dry run must describe what the real path below would actually produce, and nothing more.
-  // The real path creates the issue, adds it to the board, and returns `read(madeRef)`: adding an
-  // item to a board sets no Status field, and no sub-issue mutation is issued, so a fresh item
-  // has an unset status and no parent. Earlier this reported `snapshot.semantics.todo` and the
-  // requested parent as an attached epic — three effects the real path never produced.
+  // The dry run must describe what the real path below would actually produce — no more and no
+  // less. The real path creates the issue, adds it to the board, then sets the board's todo
+  // status and returns the verified read-back, so a fresh item has that status and no parent.
+  //
+  // This value has been wrong in both directions. It once reported `snapshot.semantics.todo` and
+  // the requested parent as an attached epic, against a real path that set neither; the fix
+  // pinned it to `null`, correct then and an understatement now that the real path does set the
+  // status. Whichever way it drifts, the failure is the same one: a caller acts on a prediction
+  // of an effect that does not match what happens without the flag.
   if (options.dryRun) {
     return {
       ref, id: '(dry-run)', title: input.title, body: input.body, state: 'OPEN',
-      status: null, projectItemId: '(dry-run)', parent: null, epic: null,
+      status: snapshot.semantics.todo, projectItemId: '(dry-run)', parent: null, epic: null,
     }
   }
 
@@ -342,11 +397,33 @@ export async function createItem(
   const contentId = created.createIssue.issue.id as string
   const madeRef = { owner: input.owner, repo: input.repo, number }
 
+  let added: any
   try {
-    await client.graphql(ADD_TO_BOARD, { project: snapshot.id, content: contentId })
+    added = await client.graphql<any>(ADD_TO_BOARD, { project: snapshot.id, content: contentId })
   } catch (error) {
     throw new OrphanedIssueError(madeRef, error instanceof Error ? error.message : String(error))
   }
 
-  return read(madeRef)
+  // Adding an item to a board sets no Status field, and `board_next` only ever returns items in
+  // the board's todo status — so without this write the item armature just created is one no
+  // selector can reach. `setStatus` rather than a bare mutation because a status this path does
+  // not verify is the same silent half-effect in a new place.
+  //
+  // The board item's id comes from the add that just returned it, so `setStatus` is spared the
+  // read that would otherwise re-derive it. That read is issue-rooted, and an issue's project
+  // memberships need not reflect an add this recent: it can report the item GitHub has just
+  // placed on the board as not being on it, which would surface here as advice to add an item
+  // that is already added. The read-back that verifies the write still happens.
+  try {
+    return await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
+      read,
+      projectItemId: added.addProjectV2ItemById.item.id as string,
+    })
+  } catch (error) {
+    throw new StatuslessItemError(
+      madeRef,
+      snapshot.semantics.todo,
+      error instanceof Error ? error.message : String(error),
+    )
+  }
 }

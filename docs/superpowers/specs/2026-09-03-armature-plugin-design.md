@@ -121,7 +121,7 @@ adapters implement this surface instead of forking it.
 | `item_get` | `ref` | body, status, board fields, parent epic with its repository, sub-issues |
 | `item_claim` | `ref` | transition to the claimed status; returns the observed post-state |
 | `item_status` | `ref`, `status` | any transition, read-after-write verified |
-| `item_create` | `repo`, `title`, `body` | issue and board membership together |
+| `item_create` | `repo`, `title`, `body` | issue, board membership, and the todo status together |
 | `board_survey` | `filter?` | normalized snapshot of the whole board |
 
 **Amended 2026-09-03, after the whole-branch review: `item_create` no longer takes `parent`, and
@@ -130,6 +130,14 @@ alias resolver, and discarded it — no `addSubIssue` mutation was ever issued �
 reported the epic attached and a `Todo` status the real path never set. That is this document's
 own thesis violated in a write path: an advertised effect that does not happen, reported as
 success, with `ARMATURE_DRY_RUN` delivering the false confirmation.
+
+**Amended 2026-09-04, per ryanlindsey/armature#17: `item_create` sets the board's todo status
+again — this time because it performs the write.** Removing the false claim above left the item
+with no status at all, and `board_next` only returns items in the board's todo status, so a
+created item was one no selector could reach: on the board for `board_survey`, absent from the
+tool that finds work, with nothing saying so. The status is now written through the same verified
+path as `item_status`. The amendment above stands as written for `parent`, which is still neither
+taken nor set; what it says about fields is superseded by this one.
 
 Implementing it properly means a new mutation, read-back verification of the link, and an
 API-availability question, so v1 removes the parameter rather than shipping a promise it does not
