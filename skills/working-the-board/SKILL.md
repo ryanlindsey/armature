@@ -11,6 +11,9 @@ Armature's MCP tools hold the facts. This skill holds the judgment.
 
 ## The loop
 
+Armature brackets the work; Superpowers does the work. Steps 5, 6, 7 and 9 belong to Superpowers
+when it is installed — see [Without Superpowers](#without-superpowers) when it is not.
+
 1. **Choose.** Run `board_next` (add `repo` or `epic` to narrow it). It returns the item and why it
    won, or a blocked explanation. If it is blocked, say what is blocking and STOP.
 2. **Read.** Run `item_get` on the chosen ref. Read the body and every document it cites. If the item
@@ -18,14 +21,31 @@ Armature's MCP tools hold the facts. This skill holds the judgment.
    not this one.
 3. **Check its prerequisites.** See the prerequisite rule below. Do this before claiming, not after.
 4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
-5. **Isolate and implement.** Use `superpowers:using-git-worktrees` and
-   `superpowers:test-driven-development` if they are installed. Otherwise: branch as
-   `issue-<number>-<slug>`, write the failing test first, then the implementation.
-6. **Verify.** Run every command in this repository's `.armature.json` `verify` list. If there is no
+5. **Isolate.** Use `superpowers:using-git-worktrees`.
+6. **Implement.** Use `superpowers:test-driven-development` — the failing test first, watched
+   failing, then the implementation.
+7. **Review.** Use `superpowers:requesting-code-review`. Fix Critical and Important findings before
+   the PR exists; carry Minor ones into the PR body so the human reviewer sees them.
+8. **Verify.** Run every command in this repository's `.armature.json` `verify` list. If there is no
    such list, run the project's test suite.
-7. **Open a PR.** Title is a Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
-8. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
-   Report the PR link and STOP.
+9. **Open a PR.** Use `superpowers:finishing-a-development-branch`, taking its option 2 — push and
+   open the pull request. Title is a Conventional Commit. Body contains `Closes #<number>`.
+   **Do not merge.**
+10. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
+    Report the PR link and STOP.
+
+## Without Superpowers
+
+Most installs will not have it. Every step above still happens; only what carries it changes.
+
+| Step | Instead |
+| --- | --- |
+| 5. Isolate | Branch as `issue-<number>-<slug>`. |
+| 6. Implement | Write the failing test first, watch it fail, then write the implementation. |
+| 7. Review | Re-read the whole diff against the item's acceptance criteria before opening the PR. |
+| 9. Open a PR | `git push -u origin <branch>`, then `gh pr create`. |
+
+Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does the never-merge rule.
 
 ## Rules
 
@@ -41,4 +61,8 @@ Armature's MCP tools hold the facts. This skill holds the judgment.
   If any of them is not in the board's done status, say which item is waiting on which, and STOP
   without claiming. The server does not check prerequisites — it reports facts and effects, and
   "this should wait" is a judgment — so this rule is the only place that check exists.
+- **`finishing-a-development-branch` does not get to ask its menu.** That skill's first option is
+  "Merge back to `<base-branch>` locally", and armature never merges. Its option 2 — push, open the
+  PR, keep the worktree — is step 9 exactly, so take option 2 and skip the question. Keep the
+  worktree; the human iterates on review feedback there.
 - **Never merge.** Armature opens PRs; people merge them.

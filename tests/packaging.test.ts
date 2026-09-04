@@ -232,3 +232,86 @@ describe('the skill carries the policies the server deliberately does not enforc
     expect(skill).toMatch(/prerequisite/i)
   })
 })
+
+// The spec states the composition as a four-skill chain — using-git-worktrees →
+// test-driven-development → requesting-code-review → finishing-a-development-branch — with
+// armature bracketing it: picking and claiming before, opening the PR and moving the item after.
+// The skill named only the first two, so the relationship the design describes and the one that
+// ships had drifted apart. These tests pin the chain to the spec.
+const SUPERPOWERS_CHAIN = [
+  'superpowers:using-git-worktrees',
+  'superpowers:test-driven-development',
+  'superpowers:requesting-code-review',
+  'superpowers:finishing-a-development-branch',
+]
+
+function section(markdown: string, heading: string): string {
+  const match = new RegExp(`^#{2,3} .*${heading}.*$`, 'im').exec(markdown)
+  expect(match, `expected a heading matching /${heading}/`).not.toBeNull()
+  const rest = markdown.slice(match!.index + match![0].length)
+  const next = /^#{2,3} /m.exec(rest)
+  return next ? rest.slice(0, next.index) : rest
+}
+
+describe('the skill composes with Superpowers rather than reimplementing it', () => {
+  const skill = readText('skills/working-the-board/SKILL.md')
+
+  for (const name of SUPERPOWERS_CHAIN) {
+    it(`names ${name}`, () => {
+      expect(skill).toContain(name)
+    })
+  }
+
+  it('orders the chain isolate, implement, review, finish', () => {
+    const positions = SUPERPOWERS_CHAIN.map((name) => skill.indexOf(name))
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+  })
+
+  // That skill's Step 4 offers "1. Merge back to <base-branch> locally" first, which contradicts
+  // armature's central rule. Its option 2 — push, open the PR, keep the worktree — is armature's
+  // own step, so the two compose only if the menu is never asked.
+  it('refuses finishing-a-development-branch its merge option', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/finishing-a-development-branch/)
+    expect(rules).toMatch(/option 2/i)
+    expect(rules).toMatch(/menu/i)
+  })
+
+  it('gives an install without Superpowers a fallback for every link in the chain', () => {
+    const fallback = section(skill, 'Without Superpowers')
+    expect(fallback, 'isolation fallback').toMatch(/branch/i)
+    expect(fallback, 'TDD fallback').toMatch(/test/i)
+    expect(fallback, 'review fallback').toMatch(/review/i)
+    expect(fallback, 'finish fallback').toMatch(/pull request|\bPR\b/)
+  })
+})
+
+describe('the README surfaces the Superpowers relationship above the fold', () => {
+  const readme = readText('README.md')
+
+  it('names Superpowers before it explains how to install', () => {
+    const mention = readme.indexOf('Superpowers')
+    expect(mention, 'README never mentions Superpowers').toBeGreaterThan(-1)
+    expect(mention).toBeLessThan(readme.indexOf('## Install'))
+  })
+
+  it('gives the relationship a section of its own', () => {
+    expect(readme).toMatch(/^## .*Superpowers.*$/im)
+  })
+
+  it('traces one run, labelling which layer owns each step', () => {
+    const trace = section(readme, 'Superpowers')
+    for (const name of SUPERPOWERS_CHAIN) {
+      expect(trace, `trace omits ${name}`).toContain(name.replace('superpowers:', ''))
+    }
+    for (const tool of ['board_next', 'item_claim', 'item_status']) {
+      expect(trace, `trace omits ${tool}`).toContain(tool)
+    }
+  })
+
+  // One statement of the relationship, not two that rot in different directions — the same
+  // failure the spec diagnoses in the four diverging copies of the prior slash command.
+  it('states the relationship in one place rather than twice', () => {
+    expect(section(readme, 'Skill')).not.toContain('github.com/obra/superpowers')
+  })
+})
