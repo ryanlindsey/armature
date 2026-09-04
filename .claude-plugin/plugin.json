@@ -1,7 +1,7 @@
 {
   "name": "armature",
   "version": "0.3.2",
-  "description": "Board-driven agentic engineering: pick the next item across many repositories, claim it, work it, and close it with a pull request.",
+  "description": "Project-driven agentic engineering: an MCP tool surface and a skill that let an agent pick the next item across many repositories, work it, and close it with a pull request.",
   "author": {
     "name": "Ryan Lindsey"
   },

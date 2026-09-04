@@ -4,7 +4,7 @@
     "name": "Ryan Lindsey"
   },
   "metadata": {
-    "description": "Board-driven agentic engineering across many repositories",
+    "description": "Project-driven agentic engineering across many repositories",
     "version": "0.3.2"
   },
   "plugins": [
@@ -14,7 +14,7 @@
         "source": "url",
         "url": "https://github.com/ryanlindsey/armature.git"
       },
-      "description": "Turn a project board into the agent's work queue: pick, claim, work, and close items across many repositories.",
+      "description": "Project-driven agentic engineering: an MCP tool surface and a skill that let an agent pick the next item across many repositories, work it, and close it with a pull request.",
       "version": "0.3.2",
       "strict": true
     }
