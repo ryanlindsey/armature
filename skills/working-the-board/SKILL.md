@@ -16,14 +16,15 @@ Armature's MCP tools hold the facts. This skill holds the judgment.
 2. **Read.** Run `item_get` on the chosen ref. Read the body and every document it cites. If the item
    has an epic, read that too — `item_get` reports which repository the epic lives in, which is often
    not this one.
-3. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
-4. **Isolate and implement.** Use `superpowers:using-git-worktrees` and
+3. **Check its prerequisites.** See the prerequisite rule below. Do this before claiming, not after.
+4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
+5. **Isolate and implement.** Use `superpowers:using-git-worktrees` and
    `superpowers:test-driven-development` if they are installed. Otherwise: branch as
    `issue-<number>-<slug>`, write the failing test first, then the implementation.
-5. **Verify.** Run every command in this repository's `.armature.json` `verify` list. If there is no
+6. **Verify.** Run every command in this repository's `.armature.json` `verify` list. If there is no
    such list, run the project's test suite.
-6. **Open a PR.** Title is a Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
-7. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
+7. **Open a PR.** Title is a Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
+8. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
    Report the PR link and STOP.
 
 ## Rules
@@ -33,4 +34,11 @@ Armature's MCP tools hold the facts. This skill holds the judgment.
 - **If the armature tools are unavailable, STOP.** Do not fall back to `gh` commands to read or write
   the board. Say the server is unavailable and let a human decide.
 - **An item that is not on the board is not work.** `item_get` reports this. Ask before adding it.
+- **Work epics in order, and honour a stated prerequisite.** `board_next` already orders by epic and
+  then by issue number, so take what it gives you rather than shopping the board for something more
+  appealing. Then read the chosen item's body — and its epic's — for a prerequisite it states in
+  prose: "Depends on `owner/repo#N`", "blocked by", "after". Run `item_get` on every item named.
+  If any of them is not in the board's done status, say which item is waiting on which, and STOP
+  without claiming. The server does not check prerequisites — it reports facts and effects, and
+  "this should wait" is a judgment — so this rule is the only place that check exists.
 - **Never merge.** Armature opens PRs; people merge them.

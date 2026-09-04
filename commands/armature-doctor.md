@@ -1,11 +1,14 @@
 ---
 description: Show what armature derived about your board and what you declared
-allowed-tools: Read
+allowed-tools: mcp__plugin_armature_armature__board_survey
 ---
 
 Call `board_survey` and report, as a table:
 
-- The board, and where its identity came from
+- The board it surveyed — `board.name` and `board.provider` — and where that identity came from
+  (`board.source`: `env` for `ARMATURE_BOARD`, `repo` for this repository's `.armature.json`,
+  `user` for `~/.config/armature/config.json`, `derived` for the single board found to link to
+  this repository)
 - Every repository with items on it
 - The status options, and which were inferred to mean todo, claimed, review and done
 - Any issue number claimed by more than one repository

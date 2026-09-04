@@ -43,8 +43,10 @@ finds needs the `repo` and `project` scopes to read and write issues and board i
 ## Try it against a real board safely
 
 Set `ARMATURE_DRY_RUN=1` before pointing armature at a board for the first time. Every read
-still runs for real; every write is computed and reported but never sent. Drop the variable once
-you trust what it's about to do.
+still runs for real; every write is computed and reported but never sent. A dry run says so: the
+tool result carries `dryRun: true`, and so does the structured line every write emits to stderr,
+so a computed effect is never mistaken for one that landed. Drop the variable once you trust what
+it's about to do.
 
 ## Tools
 
@@ -57,7 +59,10 @@ The MCP server exposes six tools:
 | `item_get` | One work item's body, status, and epic (with the repository the epic lives in). |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
-| `item_create` | Create an issue and add it to the board together. Reports an orphan loudly if the add fails. |
+| `item_create` | Create an issue and add it to the board together. Reports an orphan loudly if the add fails. It does not link the new issue to a parent epic — set that on the issue afterwards. |
+
+Every reference in and out is `owner/repo#number`, or a `github.com` issue URL. A bare number is
+refused, and armature never emits one.
 
 ## Commands
 
