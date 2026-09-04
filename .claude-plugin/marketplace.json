@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Project-driven agentic engineering across many repositories",
-    "version": "0.3.2"
+    "version": "0.3.3"
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
         "url": "https://github.com/ryanlindsey/armature.git"
       },
       "description": "Project-driven agentic engineering: an MCP tool surface and a skill that let an agent pick the next item across many repositories, work it, and close it with a pull request.",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "strict": true
     }
   ]
