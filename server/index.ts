@@ -73,16 +73,20 @@ export const TOOLS = [
   {
     name: 'item_create',
     description:
-      'Create an issue, add it to the board, and set it to the board\'s todo status, so the new ' +
-      'item is one board_next can return without a second call. Reports loudly, and says which ' +
-      'of the two the board is left in, if either write fails. ' +
-      'Does not link the new issue to a parent epic — set the parent on the issue afterwards.',
+      'Create an issue, add it to the board, set it to the board\'s todo status, and optionally ' +
+      'file it under a parent epic, so the new item is one board_next can return without a ' +
+      'second call. Every step is verified, and if one fails it reports loudly which of them ' +
+      'landed and which did not.',
     inputSchema: {
       type: 'object',
       properties: {
         repo: { type: 'string', description: 'owner/name' },
         title: { type: 'string' },
         body: { type: 'string' },
+        parent: {
+          type: 'string',
+          description: 'Optional epic to file this under, as owner/repo#number.',
+        },
       },
       required: ['repo', 'title', 'body'],
     },
@@ -113,25 +117,6 @@ function presentCreated<T extends { ref: unknown }>(created: T, dryRun: boolean)
   if (!dryRun) return created
   const { ref: _omittedDryRunRef, ...rest } = created
   return presentMutation(rest, true)
-}
-
-// `item_create` used to take a `parent`, resolve it through the alias resolver, and then throw it
-// away: the dry run reported the epic attached and a Todo status, while the real path issued
-// REPO_ID / CREATE_ISSUE / ADD_TO_BOARD and no sub-issue mutation at all, then reported success.
-// The capability was removed rather than implemented — a real implementation needs a mutation,
-// read-back verification, and an API-availability answer, and sub-project 2 builds it with its
-// own tests. What must not survive is the silent discard: a caller who asks for a parent is told
-// plainly, before anything is created.
-export class UnsupportedParentError extends Error {
-  constructor() {
-    super(
-      'item_create does not link an issue to a parent epic. Armature v1 creates the issue and ' +
-        'adds it to the board; sub-issue linking is not implemented, so a "parent" argument ' +
-        'could only be discarded silently. Nothing was created. Call item_create without ' +
-        '"parent", then set the parent on the issue afterwards.',
-    )
-    this.name = 'UnsupportedParentError'
-  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -336,10 +321,6 @@ export async function dispatch(
     }
 
     case 'item_create': {
-      // Refused before anything is resolved or created: v1 issues no sub-issue mutation, so a
-      // `parent` could only ever have been discarded. See UnsupportedParentError.
-      if (args.parent !== undefined && args.parent !== null) throw new UnsupportedParentError()
-
       const repoArg = requiredString(name, 'repo', args.repo)
       const title = requiredString(name, 'title', args.title)
       // A body may legitimately be empty; a title may not — an untitled issue is what reached
@@ -354,7 +335,33 @@ export async function dispatch(
         throw new Error(`"repo" must be owner/name, got "${repoArg}".`)
       }
 
-      const created = await provider.create({ owner, repo: repoName, title, body })
+      // After the repo check, because resolving an alias can survey the board: a call that is
+      // going to be refused for its `repo` should be refused without a network round trip first.
+      //
+      // The same shape as board_next's `epic`, and for the same reasons: `!== undefined` rather
+      // than truthiness so an empty string is refused instead of silently meaning "no parent",
+      // and through refArgument so `parent: 9` raises BareRefError — a bare number names a
+      // different epic in every repository on the board.
+      //
+      // This argument was accepted once before, resolved exactly like this, and then discarded.
+      // What makes it safe now is not the resolution but the provider: it attaches the parent and
+      // verifies the attachment, or raises. Dispatch's contract is only to hand down a reference
+      // the caller actually named.
+      const parent =
+        args.parent === undefined || args.parent === null
+          ? undefined
+          : await resolveRef(refArgument(name, 'parent', args.parent))
+
+      const created = await provider.create({
+        owner,
+        repo: repoName,
+        title,
+        body,
+        // Spread rather than `parent: undefined`: CreateInput's field is optional, and a provider
+        // or test asserting on the input it was handed should see the key absent when no epic was
+        // asked for, not present and undefined.
+        ...(parent ? { parent } : {}),
+      })
       logMutation(
         {
           // See presentCreated above: a dry-run ref.number is not real, so the log gets the same

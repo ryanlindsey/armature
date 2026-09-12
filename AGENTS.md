@@ -123,6 +123,13 @@ a stderr the MCP client discards. Never hoist config resolution back above `serv
 
 Read `docs/superpowers/follow-ups.md` before "fixing" something that looks incomplete.
 `parseEpicFromBody` in `items.ts` is fully tested, exported, and intentionally not called — it
-needs a config gate and two unclosed parsing holes first. `item_create` takes no `parent` on
-purpose and refuses one loudly (`UnsupportedParentError`) rather than discarding it silently.
-Epic membership comes from GitHub's native sub-issue parent links only.
+needs a config gate and two unclosed parsing holes first. Epic membership comes from GitHub's
+native sub-issue parent links only.
+
+`item_create` does take a `parent` now (`ryanlindsey/armature#47`), and the reason it did not for
+v1 is the reason its implementation looks the way it does: the parameter was once resolved and
+then silently discarded. So the parent is resolved before anything is created (`MissingParentError`
+leaves no issue behind for a typo), linked last of the four writes, and confirmed by an
+independent read-back — never by the mutation's own payload. Four writes means four end states,
+and each has its own error rather than a shared one: `OrphanedIssueError`, `StatuslessItemError`,
+`UnlinkedItemError`, and `MissingParentError` for the case where nothing happened at all.

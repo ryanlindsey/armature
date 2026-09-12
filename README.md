@@ -81,7 +81,9 @@ item is whose epic, whether two repos collide on the same issue number — is de
 the board itself, not configured.
 
 Epic membership comes from GitHub's native sub-issue parent links. There is no separate
-in-body convention to declare it.
+in-body convention to declare it. `item_create` sets that link when you pass it a `parent`, so a
+fan-out of new issues lands under its epic and is ranked as such, rather than as a flat list
+somebody has to re-parent by hand afterwards.
 
 ## Credential
 
@@ -112,7 +114,7 @@ The MCP server exposes six tools:
 | `item_get` | One work item's body, status, and epic (with the repository the epic lives in). |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
-| `item_create` | Create an issue, add it to the board, and set it to the board's todo status, so `board_next` can return it without a second call. Reports loudly if either write fails. It does not link the new issue to a parent epic — set that on the issue afterwards. |
+| `item_create` | Create an issue, add it to the board, set it to the board's todo status, and optionally file it under a `parent` epic, so `board_next` can return it — correctly ranked — without a second call. Each step is verified, and a failure says exactly which steps landed. |
 
 Every reference in and out is `owner/repo#number`, or a `github.com` issue URL. A bare number is
 refused, and armature never emits one.

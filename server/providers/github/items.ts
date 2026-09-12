@@ -348,7 +348,57 @@ export class StatuslessItemError extends Error {
   }
 }
 
+// The parent could not be resolved, so nothing was attempted. Deliberately raised before
+// CREATE_ISSUE rather than after: a mistyped epic is the likeliest way this argument goes wrong
+// and it is knowable up front, so discovering it later would leave a real issue behind for a
+// typo — and the repair for that is a deletion, not a retry.
+export class MissingParentError extends Error {
+  constructor(parent: WorkItemRef, into: { owner: string; repo: string }) {
+    super(
+      `Cannot link a new ${into.owner}/${into.repo} issue to ${formatRef(parent)}: that issue ` +
+        `does not exist, or is not visible to this credential. Nothing was created. Check the ` +
+        `reference, or create the epic first.`,
+    )
+    this.name = 'MissingParentError'
+  }
+}
+
+// The fourth end state, and the one the other three do not describe. The issue exists, is on the
+// board, and carries the board's todo status — it is findable and workable, and every repair the
+// other two errors name has already happened. The only thing missing is the epic link, so that is
+// the only thing this message asks anyone to fix.
+//
+// It is emphatically not OrphanedIssueError, whose "orphan" is a different detachment entirely:
+// that item is off the board and untracked. This one is tracked and merely parentless, which is
+// why the word does not appear here.
+//
+// Like StatuslessItemError, the message stops at what armature observed. The link is exactly what
+// is in doubt — the cause may be a refused mutation or a read-back showing some other parent — so
+// `cause` carries whichever it was rather than this sentence asserting an end state nobody saw.
+export class UnlinkedItemError extends Error {
+  constructor(ref: WorkItemRef, parent: WorkItemRef, cause: string) {
+    super(
+      `Created ${formatRef(ref)}, added it to the board and set its status, but could not link ` +
+        `it to ${formatRef(parent)}: ${cause} The item is real and workable; only its epic is ` +
+        `unset, so board_next will rank it as a parentless item. Set the parent on the issue, ` +
+        `or retry.`,
+    )
+    this.name = 'UnlinkedItemError'
+  }
+}
+
 const REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`
+
+// Rooted at repository(owner,name) for the same reason ITEM_QUERY is: it cannot return another
+// repository's issue, so the node id it yields belongs to the reference the caller actually gave.
+//
+// Exported for tests/integration/queries.integration.test.ts. A fake client accepts any document
+// at all, so nothing else in this repository can tell a query GitHub would reject from one it
+// would not — which is how an invalid `owner{ login }` selection once shipped.
+export const PARENT_ID = `
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ issue(number:$number){ id } }
+}`
 
 const CREATE_ISSUE = `
 mutation($repo:ID!,$title:String!,$body:String!){
@@ -359,6 +409,44 @@ const ADD_TO_BOARD = `
 mutation($project:ID!,$content:ID!){
   addProjectV2ItemById(input:{projectId:$project,contentId:$content}){ item{ id } }
 }`
+
+// `issueId` is the PARENT and `subIssueId` the child — the naming reads backwards, and swapping
+// them is not an error GitHub reports: it files the epic underneath the ticket just created,
+// inverting the hierarchy board_next ranks by. The variables are named for what they mean here.
+//
+// The payload is selected but never trusted as proof: verification is an independent read-back
+// through `read`, exactly as setStatus does. A mutation that returns is not a link the board
+// shows, and reporting the second from the first is the half-effect this capability was removed
+// for in v1.
+//
+// `replaceParent` is not sent. It exists to move a sub-issue that already has a parent, and this
+// issue was created moments ago — asking to replace a parent that cannot exist would be claiming
+// a case this path does not have.
+// Exported for the same reason as PARENT_ID above, and with more at stake: this is the only
+// mutation document in the codebase no unit test can validate, because the fake client answers
+// whatever it is sent. See queries.integration.test.ts for how it is checked without linking
+// anything.
+export const ADD_SUB_ISSUE = `
+mutation($parent:ID!,$child:ID!){
+  addSubIssue(input:{issueId:$parent,subIssueId:$child}){ subIssue{ id } }
+}`
+
+/**
+ * Whether a read-back's parent is the one that was asked for.
+ *
+ * Owner and repository are compared case-insensitively because GitHub canonicalises them: a
+ * caller who writes `Acme/Web#9` is answered with `acme/web#9`, and treating that as a different
+ * epic would raise UnlinkedItemError over a link that landed perfectly. The number is exact —
+ * it is the part that cannot be spelled two ways.
+ */
+function sameRef(a: WorkItemRef | null, b: WorkItemRef): boolean {
+  if (!a) return false
+  return (
+    a.number === b.number &&
+    a.owner.toLowerCase() === b.owner.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase()
+  )
+}
 
 export async function createItem(
   client: GitHubClient,
@@ -371,22 +459,48 @@ export async function createItem(
   const ref = { owner: input.owner, repo: input.repo, number: 0 }
 
   // The dry run must describe what the real path below would actually produce — no more and no
-  // less. The real path creates the issue, adds it to the board, then sets the board's todo
-  // status and returns the verified read-back, so a fresh item has that status and no parent.
+  // less. The real path creates the issue, adds it to the board, sets the board's todo status,
+  // links the parent if one was asked for, and returns the verified read-back — so a fresh item
+  // has that status, and the epic it was asked for or none at all.
   //
   // This value has been wrong in both directions. It once reported `snapshot.semantics.todo` and
   // the requested parent as an attached epic, against a real path that set neither; the fix
-  // pinned it to `null`, correct then and an understatement now that the real path does set the
-  // status. Whichever way it drifts, the failure is the same one: a caller acts on a prediction
-  // of an effect that does not match what happens without the flag.
+  // pinned both to `null`, correct then and an understatement now that the real path does set the
+  // status and does attach the epic. Whichever way it drifts, the failure is the same one: a
+  // caller acts on a prediction of an effect that does not match what happens without the flag.
+  //
+  // Reporting the requested parent here is not the old lie returning. The old one predicted an
+  // attachment against a path that issued no mutation; this one predicts an attachment the path
+  // below performs and verifies — and the prediction is held to that by a test comparing the two
+  // results directly, rather than by this comment.
   if (options.dryRun) {
     return {
       ref, id: '(dry-run)', title: input.title, body: input.body, state: 'OPEN',
-      status: snapshot.semantics.todo, projectItemId: '(dry-run)', parent: null, epic: null,
+      status: snapshot.semantics.todo, projectItemId: '(dry-run)',
+      parent: input.parent ?? null, epic: input.parent ?? null,
     }
   }
 
   const repo = await client.graphql<any>(REPO_ID, { owner: input.owner, name: input.repo })
+
+  // Resolved before anything is created. The node id is needed either way, and asking for it
+  // first turns the commonest mistake — a parent that does not exist — into a refusal that
+  // leaves no issue behind. See MissingParentError.
+  //
+  // The reference and the id it resolved to are carried as one value rather than two nullables,
+  // so the link step below cannot be reached holding one without the other.
+  let link: { ref: WorkItemRef; id: string } | null = null
+  if (input.parent) {
+    const found = await client.graphql<any>(PARENT_ID, {
+      owner: input.parent.owner,
+      name: input.parent.repo,
+      number: input.parent.number,
+    })
+    const id = found.repository?.issue?.id as string | undefined
+    if (!id) throw new MissingParentError(input.parent, input)
+    link = { ref: input.parent, id }
+  }
+
   const created = await client.graphql<any>(CREATE_ISSUE, {
     repo: repo.repository.id,
     title: input.title,
@@ -414,8 +528,9 @@ export async function createItem(
   // memberships need not reflect an add this recent: it can report the item GitHub has just
   // placed on the board as not being on it, which would surface here as advice to add an item
   // that is already added. The read-back that verifies the write still happens.
+  let withStatus: ItemDetail
   try {
-    return await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
+    withStatus = await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
       read,
       projectItemId: added.addProjectV2ItemById.item.id as string,
     })
@@ -423,6 +538,34 @@ export async function createItem(
     throw new StatuslessItemError(
       madeRef,
       snapshot.semantics.todo,
+      error instanceof Error ? error.message : String(error),
+    )
+  }
+
+  if (!link) return withStatus
+
+  // Last of the four writes, and deliberately so: an item linked to an epic but missing from the
+  // board is a worse half-landing than an unlinked one, and a harder one to notice. By the time
+  // this runs the three states before it are confirmed, so anything that goes wrong here leaves
+  // exactly one thing unset — which is what lets UnlinkedItemError be as specific as it is.
+  //
+  // Both the mutation and the read-back that proves it sit inside one try: a link armature could
+  // not confirm is reported the same way as one the server refused, because the board is in the
+  // same state either way — unknown. Returning `linked` rather than `withStatus` means the parent
+  // a caller sees is the one the board reported, never the one they asked for.
+  try {
+    await client.graphql(ADD_SUB_ISSUE, { parent: link.id, child: contentId })
+    const linked = await read(madeRef)
+    if (!sameRef(linked.parent, link.ref)) {
+      throw new Error(
+        `reading it back shows ${linked.parent ? formatRef(linked.parent) : 'no parent'}.`,
+      )
+    }
+    return linked
+  } catch (error) {
+    throw new UnlinkedItemError(
+      madeRef,
+      link.ref,
       error instanceof Error ? error.message : String(error),
     )
   }

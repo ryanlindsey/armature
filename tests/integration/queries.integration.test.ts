@@ -3,6 +3,7 @@ import { readCliTokenFromGh, resolveCredential } from '../../server/auth.js'
 import { REPO_BOARDS_QUERY } from '../../server/config-io.js'
 import { BOARD_QUERY } from '../../server/providers/github/board.js'
 import { GitHubClient } from '../../server/providers/github/client.js'
+import { ADD_SUB_ISSUE, PARENT_ID } from '../../server/providers/github/items.js'
 
 // ---------------------------------------------------------------------------------------------
 // The test that would have caught the shipped `owner{ login }`.
@@ -43,5 +44,54 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
       cursor: null,
     })
     expect(data.repositoryOwner?.projectV2?.id).toMatch(/^PVT_/)
+  })
+
+  it('accepts PARENT_ID against the live schema and returns a node id for a real issue', async () => {
+    const board = await (await client()).graphql<any>(BOARD_QUERY, {
+      owner: owner!,
+      number,
+      cursor: null,
+    })
+
+    // Any issue on the configured board will do: this checks the document, not the issue.
+    const content = board.repositoryOwner?.projectV2?.items?.nodes?.find(
+      (n: any) => n?.content?.number != null,
+    )?.content
+    expect(content, 'the integration board must hold at least one issue').toBeDefined()
+
+    const data = await (await client()).graphql<any>(PARENT_ID, {
+      owner: content.repository.owner.login,
+      name: content.repository.name,
+      number: content.number,
+    })
+    expect(data.repository?.issue?.id).toMatch(/^I_/)
+  })
+
+  // -------------------------------------------------------------------------------------------
+  // The one mutation this suite can check without performing it.
+  //
+  // GraphQL validates a document in full before executing any of it, so a request that reaches
+  // execution has already proved its field names, argument names and types against the live
+  // schema. Sending ADD_SUB_ISSUE with node ids that resolve to nothing therefore exercises
+  // exactly the half that matters here — is this document one GitHub accepts — and stops before
+  // the half that would file a real issue under a real epic on somebody's board.
+  //
+  // The distinction the assertion rests on: a misspelled field or a renamed input argument comes
+  // back as a validation error naming that field, never as NOT_FOUND. So NOT_FOUND is the pass.
+  // Only this document's shape is covered — that `issueId` is the parent and `subIssueId` the
+  // child is a semantic fact no schema check can see, and is asserted in items-create.test.ts.
+  // -------------------------------------------------------------------------------------------
+  it('accepts ADD_SUB_ISSUE against the live schema, without linking anything', async () => {
+    const unresolvable = 'I_kwDOAAAAAAAAAAAAAAAAAA'
+
+    const error = await (await client())
+      .graphql<any>(ADD_SUB_ISSUE, { parent: unresolvable, child: unresolvable })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(error, 'a mutation on unresolvable ids must not succeed').not.toBeNull()
+    // Execution was reached, so the document validated. A schema rejection reads very differently.
+    expect(error!.message).toMatch(/could not resolve to a node/i)
+    expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
   })
 })

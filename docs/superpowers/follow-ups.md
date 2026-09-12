@@ -7,10 +7,12 @@ deferred deliberately — none of it is a known correctness defect in shipped co
 
 ## Work to do
 
-**`item_create` cannot link a parent.** v1 removed the parameter rather than ship one that was
-resolved and then silently discarded; the spec carries a dated amendment explaining why. Adding it
-back means an `addSubIssue` mutation plus read-back verification of the link, in the same shape as
-every other verified write. Sub-project 2 needs this for cross-repo fan-out.
+~~**`item_create` cannot link a parent.**~~ **Done, 2026-09-12, in ryanlindsey/armature#47.** It
+takes a `parent`, resolves it before creating anything, links it last, and verifies the link by
+reading it back; `addSubIssue` turned out to be generally available on the scopes armature already
+asks for. The spec's 2026-09-12 amendment says why it is shaped that way. Struck through rather
+than deleted: this file is the record of what was deferred deliberately, and an entry that simply
+vanishes reads as one that was never there.
 
 **The configuration gate for `parseEpicFromBody`.** The function and its 27 tests are intact and
 exported, but nothing calls them and esbuild tree-shakes them out of the shipped bundle. The spec

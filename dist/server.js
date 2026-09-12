@@ -17335,7 +17335,27 @@ var StatuslessItemError = class extends Error {
     this.name = "StatuslessItemError";
   }
 };
+var MissingParentError = class extends Error {
+  constructor(parent, into) {
+    super(
+      `Cannot link a new ${into.owner}/${into.repo} issue to ${formatRef(parent)}: that issue does not exist, or is not visible to this credential. Nothing was created. Check the reference, or create the epic first.`
+    );
+    this.name = "MissingParentError";
+  }
+};
+var UnlinkedItemError = class extends Error {
+  constructor(ref, parent, cause) {
+    super(
+      `Created ${formatRef(ref)}, added it to the board and set its status, but could not link it to ${formatRef(parent)}: ${cause} The item is real and workable; only its epic is unset, so board_next will rank it as a parentless item. Set the parent on the issue, or retry.`
+    );
+    this.name = "UnlinkedItemError";
+  }
+};
 var REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`;
+var PARENT_ID = `
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ issue(number:$number){ id } }
+}`;
 var CREATE_ISSUE = `
 mutation($repo:ID!,$title:String!,$body:String!){
   createIssue(input:{repositoryId:$repo,title:$title,body:$body}){ issue{ id number } }
@@ -17344,6 +17364,14 @@ var ADD_TO_BOARD = `
 mutation($project:ID!,$content:ID!){
   addProjectV2ItemById(input:{projectId:$project,contentId:$content}){ item{ id } }
 }`;
+var ADD_SUB_ISSUE = `
+mutation($parent:ID!,$child:ID!){
+  addSubIssue(input:{issueId:$parent,subIssueId:$child}){ subIssue{ id } }
+}`;
+function sameRef(a, b) {
+  if (!a) return false;
+  return a.number === b.number && a.owner.toLowerCase() === b.owner.toLowerCase() && a.repo.toLowerCase() === b.repo.toLowerCase();
+}
 async function createItem(client, board, snapshot, input, options = {}) {
   const read = options.read ?? ((r) => getItem(client, board, r));
   const ref = { owner: input.owner, repo: input.repo, number: 0 };
@@ -17356,11 +17384,22 @@ async function createItem(client, board, snapshot, input, options = {}) {
       state: "OPEN",
       status: snapshot.semantics.todo,
       projectItemId: "(dry-run)",
-      parent: null,
-      epic: null
+      parent: input.parent ?? null,
+      epic: input.parent ?? null
     };
   }
   const repo = await client.graphql(REPO_ID, { owner: input.owner, name: input.repo });
+  let link = null;
+  if (input.parent) {
+    const found = await client.graphql(PARENT_ID, {
+      owner: input.parent.owner,
+      name: input.parent.repo,
+      number: input.parent.number
+    });
+    const id = found.repository?.issue?.id;
+    if (!id) throw new MissingParentError(input.parent, input);
+    link = { ref: input.parent, id };
+  }
   const created = await client.graphql(CREATE_ISSUE, {
     repo: repo.repository.id,
     title: input.title,
@@ -17375,8 +17414,9 @@ async function createItem(client, board, snapshot, input, options = {}) {
   } catch (error2) {
     throw new OrphanedIssueError(madeRef, error2 instanceof Error ? error2.message : String(error2));
   }
+  let withStatus;
   try {
-    return await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
+    withStatus = await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
       read,
       projectItemId: added.addProjectV2ItemById.item.id
     });
@@ -17384,6 +17424,23 @@ async function createItem(client, board, snapshot, input, options = {}) {
     throw new StatuslessItemError(
       madeRef,
       snapshot.semantics.todo,
+      error2 instanceof Error ? error2.message : String(error2)
+    );
+  }
+  if (!link) return withStatus;
+  try {
+    await client.graphql(ADD_SUB_ISSUE, { parent: link.id, child: contentId });
+    const linked = await read(madeRef);
+    if (!sameRef(linked.parent, link.ref)) {
+      throw new Error(
+        `reading it back shows ${linked.parent ? formatRef(linked.parent) : "no parent"}.`
+      );
+    }
+    return linked;
+  } catch (error2) {
+    throw new UnlinkedItemError(
+      madeRef,
+      link.ref,
       error2 instanceof Error ? error2.message : String(error2)
     );
   }
@@ -17613,13 +17670,17 @@ var TOOLS = [
   },
   {
     name: "item_create",
-    description: "Create an issue, add it to the board, and set it to the board's todo status, so the new item is one board_next can return without a second call. Reports loudly, and says which of the two the board is left in, if either write fails. Does not link the new issue to a parent epic \u2014 set the parent on the issue afterwards.",
+    description: "Create an issue, add it to the board, set it to the board's todo status, and optionally file it under a parent epic, so the new item is one board_next can return without a second call. Every step is verified, and if one fails it reports loudly which of them landed and which did not.",
     inputSchema: {
       type: "object",
       properties: {
         repo: { type: "string", description: "owner/name" },
         title: { type: "string" },
-        body: { type: "string" }
+        body: { type: "string" },
+        parent: {
+          type: "string",
+          description: "Optional epic to file this under, as owner/repo#number."
+        }
       },
       required: ["repo", "title", "body"]
     }
@@ -17636,14 +17697,6 @@ function presentCreated(created, dryRun) {
   const { ref: _omittedDryRunRef, ...rest } = created;
   return presentMutation(rest, true);
 }
-var UnsupportedParentError = class extends Error {
-  constructor() {
-    super(
-      'item_create does not link an issue to a parent epic. Armature v1 creates the issue and adds it to the board; sub-issue linking is not implemented, so a "parent" argument could only be discarded silently. Nothing was created. Call item_create without "parent", then set the parent on the issue afterwards.'
-    );
-    this.name = "UnsupportedParentError";
-  }
-};
 var InvalidArgumentError = class extends Error {
   constructor(tool, field, expected, got) {
     super(
@@ -17754,7 +17807,6 @@ async function dispatch(provider, name, args, options) {
       return ok(presentMutation(after, options.dryRun));
     }
     case "item_create": {
-      if (args.parent !== void 0 && args.parent !== null) throw new UnsupportedParentError();
       const repoArg = requiredString(name, "repo", args.repo);
       const title = requiredString(name, "title", args.title);
       const body = requiredText(name, "body", args.body);
@@ -17763,7 +17815,17 @@ async function dispatch(provider, name, args, options) {
       if (parts.length !== 2 || !owner || !repoName) {
         throw new Error(`"repo" must be owner/name, got "${repoArg}".`);
       }
-      const created = await provider.create({ owner, repo: repoName, title, body });
+      const parent = args.parent === void 0 || args.parent === null ? void 0 : await resolveRef(refArgument(name, "parent", args.parent));
+      const created = await provider.create({
+        owner,
+        repo: repoName,
+        title,
+        body,
+        // Spread rather than `parent: undefined`: CreateInput's field is optional, and a provider
+        // or test asserting on the input it was handed should see the key absent when no epic was
+        // asked for, not present and undefined.
+        ...parent ? { parent } : {}
+      });
       logMutation(
         {
           // See presentCreated above: a dry-run ref.number is not real, so the log gets the same
@@ -17831,7 +17893,6 @@ if (isEntryPoint(import.meta.url, process.argv[1])) {
 export {
   InvalidArgumentError,
   TOOLS,
-  UnsupportedParentError,
   dispatch,
   isEntryPoint,
   makeRefResolver,
