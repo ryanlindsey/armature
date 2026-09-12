@@ -121,7 +121,7 @@ adapters implement this surface instead of forking it.
 | `item_get` | `ref` | body, status, board fields, parent epic with its repository, sub-issues |
 | `item_claim` | `ref` | transition to the claimed status; returns the observed post-state |
 | `item_status` | `ref`, `status` | any transition, read-after-write verified |
-| `item_create` | `repo`, `title`, `body` | issue, board membership, and the todo status together |
+| `item_create` | `repo`, `title`, `body`, `parent?` | issue, board membership, the todo status and the epic link together |
 | `board_survey` | `filter?` | normalized snapshot of the whole board |
 
 **Amended 2026-09-03, after the whole-branch review: `item_create` no longer takes `parent`, and
@@ -144,6 +144,39 @@ API-availability question, so v1 removes the parameter rather than shipping a pr
 keep. Supplying `parent` now fails loudly saying sub-issue linking is unsupported and the parent
 must be set on the issue afterwards. Sub-project 2 needs parent linking for cross-repo fan-out and
 builds it there, with its own tests.
+
+**Amended 2026-09-12, per ryanlindsey/armature#47: `item_create` takes `parent` again — this time
+because it issues the mutation and verifies the link.** The two amendments above are now history
+rather than current behaviour, and are kept because the shape of this implementation is an answer
+to them.
+
+The API-availability question they defer is settled: `addSubIssue` is on GitHub's public GraphQL
+schema, undeprecated, needs no preview header, and executes on the `repo` and `project` scopes
+armature already asks for. It takes the parent as `issueId` and the child as `subIssueId` — a
+naming that reads backwards, and a swap GitHub would accept silently, filing the epic under the
+new ticket and inverting the ordering `board_next` depends on.
+
+What the earlier amendments were really objecting to was an advertised effect nobody observed, so:
+
+- The parent is resolved to a node id **before** anything is created. A reference that does not
+  resolve raises `MissingParentError` with no issue left behind — the commonest way this argument
+  goes wrong is a typo, and the repair for a typo should not be a deletion.
+- The link is the **last** of the four writes. An item linked to an epic but missing from the
+  board is a worse half-landing than an unlinked one, and a harder one to notice.
+- The link is confirmed by an **independent read-back**, never by the mutation's own payload — the
+  same rule `item_status` follows. A mutation that returns is not a link the board shows, and
+  reporting the second from the first is precisely the 2026-09-03 failure one step later.
+- Four writes means four end states, and each gets its own error: `OrphanedIssueError`,
+  `StatuslessItemError`, `UnlinkedItemError`, and `MissingParentError` for "nothing happened".
+  `UnlinkedItemError` says the item is real, on the board, and workable, and that only its epic is
+  unset — reusing either of the other two would send a reader after a repair they do not need.
+- `ARMATURE_DRY_RUN` may now report an epic, which is the shape of the original lie. What keeps it
+  honest is not care but a test that runs the dry-run and real paths over the same input and
+  compares the two results, since `follow-ups.md` records this branch being wrong in both
+  directions already.
+
+The amendments' own standard still binds any future adapter: a tracker with no parent-child
+relation must refuse `parent`, exactly as v1 did, rather than accept and drop it.
 
 ### The `ref` type
 

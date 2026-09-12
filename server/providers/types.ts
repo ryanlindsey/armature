@@ -43,14 +43,27 @@ export type BoardSnapshot = {
   collisions: Record<number, string[]>
 }
 
-// No `parent`: creating an issue and linking it to an epic are two operations, and v1 performs
-// only the first. A provider that accepted a parent it could not attach would report a success
-// the board does not show — see UnsupportedParentError in server/index.ts.
 export type CreateInput = {
   owner: string
   repo: string
   title: string
   body: string
+  /**
+   * The epic to file the new issue under, already resolved to a reference.
+   *
+   * The reasoning that kept this field off the type for v1 stands and is worth keeping in view:
+   * creating an issue and linking it to an epic are two operations, and a provider that accepted
+   * a parent it could not attach would report a success the board does not show. That is what
+   * happened — the field was resolved through the alias resolver and then discarded, with the
+   * dry run reporting an epic the real path never attached. The field returns now because the
+   * second operation exists, not because the objection was wrong: an adapter implementing this
+   * must attach the parent and verify the attachment by reading it back, or raise rather than
+   * return. See UnlinkedItemError in providers/github/items.ts for the shape of that refusal.
+   *
+   * A tracker with no parent-child relation of its own has no honest way to honour this, and
+   * must refuse it for the same reason v1 did rather than accept and drop it.
+   */
+  parent?: WorkItemRef
 }
 
 export interface BoardProvider {

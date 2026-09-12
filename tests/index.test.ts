@@ -520,63 +520,123 @@ describe('dispatch: ref resolution', () => {
 
 // item_create used to accept a `parent`, resolve it, and then discard it: the dry run reported
 // the epic attached and a Todo status, while the real path issued no sub-issue mutation at all
-// and returned an orphan. The capability was never real, so it is gone rather than implemented —
-// and a caller who passes `parent` must be told, not quietly ignored.
-describe('dispatch: item_create refuses a parent rather than discarding it', () => {
-  it('fails loud, creates nothing, and says the parent must be set afterwards', async () => {
+// and returned an orphan. What makes the argument safe to accept again is not that it is resolved
+// — it was resolved before — but that the provider now attaches it and verifies the attachment.
+// Everything below holds the boundary to the same standard as every other reference dispatch
+// takes: resolved through the resolver, and refused as a bare number.
+describe('dispatch: item_create resolves a parent and hands it to the provider', () => {
+  it('passes the resolved reference through rather than the raw token', async () => {
+    const create = vi.fn().mockResolvedValue({
+      ref: { owner: 'acme', repo: 'web', number: 42 },
+      id: 'I_1', title: 't', body: 'b', state: 'OPEN',
+      status: 'Todo', projectItemId: 'PVTI_1',
+      parent: { owner: 'acme', repo: 'platform', number: 9 },
+      epic: { owner: 'acme', repo: 'platform', number: 9 },
+    })
+    const resolveRef = vi.fn().mockResolvedValue({ owner: 'acme', repo: 'platform', number: 9 })
+    const provider = makeProvider({ create })
+
+    await dispatch(
+      provider,
+      'item_create',
+      { repo: 'acme/web', title: 't', body: 'b', parent: 'platform#9' },
+      { dryRun: false, resolveRef, logWrite: () => {} },
+    )
+
+    expect(resolveRef).toHaveBeenCalledWith('platform#9')
+    expect(create).toHaveBeenCalledWith({
+      owner: 'acme',
+      repo: 'web',
+      title: 't',
+      body: 'b',
+      parent: { owner: 'acme', repo: 'platform', number: 9 },
+    })
+  })
+
+  // The production incident, in the one argument that had been exempt from it: a JSON number is
+  // the most natural way a model reproduces it, and `parent: 9` names a different epic in every
+  // repository on the board.
+  it('refuses a bare number parent with BareRefError and creates nothing', async () => {
     const create = vi.fn()
+    const provider = makeProvider({ create })
+
+    await expect(
+      dispatch(
+        provider,
+        'item_create',
+        { repo: 'acme/web', title: 't', body: 'b', parent: 9 },
+        { dryRun: false, logWrite: () => {} },
+      ),
+    ).rejects.toThrow(BareRefError)
+
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('creates without a parent when none is asked for', async () => {
+    const create = vi.fn().mockResolvedValue({
+      ref: { owner: 'acme', repo: 'web', number: 42 },
+      id: 'I_1', title: 't', body: 'b', state: 'OPEN',
+      status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null,
+    })
     const resolveRef = vi.fn()
     const provider = makeProvider({ create })
 
-    await expect(
-      dispatch(
-        provider,
-        'item_create',
-        { repo: 'acme/web', title: 't', body: 'b', parent: 'acme/platform#9' },
-        { dryRun: false, resolveRef, logWrite: () => {} },
-      ),
-    ).rejects.toThrow(/parent/i)
+    await dispatch(
+      provider,
+      'item_create',
+      { repo: 'acme/web', title: 't', body: 'b' },
+      { dryRun: false, resolveRef, logWrite: () => {} },
+    )
 
-    expect(create).not.toHaveBeenCalled()
     expect(resolveRef).not.toHaveBeenCalled()
+    expect(create).toHaveBeenCalledWith({ owner: 'acme', repo: 'web', title: 't', body: 'b' })
   })
 
-  it('names sub-issue linking as unsupported and states that nothing was created', async () => {
-    const provider = makeProvider()
-    const error = await dispatch(
+  // A dry run may now report an epic, which is the exact shape of the old lie — so what keeps it
+  // honest is that the prediction comes from the provider, which is held to matching its own real
+  // path. Dispatch's job is only to not invent a `ref` alongside it.
+  it('reports the predicted epic in a dry run while still omitting the fake ref', async () => {
+    const provider = makeProvider({
+      create: vi.fn().mockResolvedValue({
+        ref: { owner: 'acme', repo: 'web', number: 0 },
+        id: '(dry-run)', title: 't', body: 'b', state: 'OPEN',
+        status: 'Todo', projectItemId: '(dry-run)',
+        parent: { owner: 'acme', repo: 'platform', number: 9 },
+        epic: { owner: 'acme', repo: 'platform', number: 9 },
+      }),
+    })
+
+    const result = await dispatch(
       provider,
       'item_create',
       { repo: 'acme/web', title: 't', body: 'b', parent: 'acme/platform#9' },
-      { dryRun: false, logWrite: () => {} },
-    ).catch((e: Error) => e)
+      { dryRun: true, logWrite: () => {} },
+    )
 
-    expect((error as Error).message).toMatch(/sub-issue/i)
-    expect((error as Error).message).toMatch(/nothing was created/i)
-  })
-
-  it('refuses in a dry run too, rather than reporting an attachment it could not make', async () => {
-    const create = vi.fn()
-    const provider = makeProvider({ create })
-
-    await expect(
-      dispatch(
-        provider,
-        'item_create',
-        { repo: 'acme/web', title: 't', body: 'b', parent: 'acme/platform#9' },
-        { dryRun: true, logWrite: () => {} },
-      ),
-    ).rejects.toThrow(/parent/i)
-    expect(create).not.toHaveBeenCalled()
+    const body = textOf(result) as Record<string, unknown>
+    expect(body).not.toHaveProperty('ref')
+    expect(body.dryRun).toBe(true)
+    expect(body.epic).toEqual({ owner: 'acme', repo: 'platform', number: 9 })
   })
 })
 
 describe('the declared tool surface', () => {
-  it('does not offer a parent on item_create', () => {
+  it('offers a parent on item_create, described as a qualified reference', () => {
     const create = TOOLS.find((t) => t.name === 'item_create')!
-    expect(Object.keys(create.inputSchema.properties)).not.toContain('parent')
-    expect(JSON.stringify(create.inputSchema)).not.toMatch(/parent/i)
-    // The description still mentions the parent, so a caller learns what to do instead.
-    expect(create.description).toMatch(/set the parent on the issue afterwards/i)
+    const parent = (create.inputSchema.properties as Record<string, { description?: string }>).parent
+    expect(parent).toBeDefined()
+    expect(parent!.description).toMatch(/owner\/repo#number/)
+    // Optional: creating a standalone item is still the common case.
+    expect(create.inputSchema.required).not.toContain('parent')
+  })
+
+  // The description is where a caller learns what the tool does. Leaving the old sentence in
+  // place would advertise the absence of a capability the handler now delivers — the same
+  // schema/handler divergence, pointing the other way.
+  it('no longer says item_create cannot link a parent', () => {
+    const create = TOOLS.find((t) => t.name === 'item_create')!
+    expect(create.description).not.toMatch(/set the parent on the issue afterwards/i)
+    expect(create.description).not.toMatch(/does not link/i)
   })
 
   // "Adds it to the board" was true before and is still true, but it was never the whole answer:
