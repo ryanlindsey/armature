@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/ryanlindsey/armature/compare/armature-v0.3.4...armature-v0.4.0) (2026-09-12)
+
+
+### Features
+
+* **item_create:** link a new issue to its parent epic ([#48](https://github.com/ryanlindsey/armature/issues/48)) ([89ea015](https://github.com/ryanlindsey/armature/commit/89ea0157112f13f77578654546f176bec6caf6da))
+
 ## [0.3.4](https://github.com/ryanlindsey/armature/compare/armature-v0.3.3...armature-v0.3.4) (2026-09-04)
 
 
