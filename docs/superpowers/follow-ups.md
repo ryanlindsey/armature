@@ -17,8 +17,9 @@ vanishes reads as one that was never there.
 **The configuration gate for `parseEpicFromBody`.** The function and its 27 tests are intact and
 exported, but nothing calls them and esbuild tree-shakes them out of the shipped bundle. The spec
 describes this fallback as "an optional **declared** pattern", which is the gate that does not yet
-exist. Before wiring it into any live path, close the two holes named in the comment above it:
-tab-stop-expanded indentation, and HTML blocks such as `<pre>` or `<details>`. Three rounds of
+exist. Before wiring it into any live path, close the hole named in the comment above it: HTML
+blocks such as `<pre>` or `<details>`. (Tab-stop-expanded indentation, the other hole, is closed:
+`codeMask` counts CommonMark columns.) Three rounds of
 tightening a heuristic failed before it was cut; a fourth should not start without that gate.
 
 **Cross-epic prerequisite blocking.** `SKILL.md` carries the "Depends on" policy, but nothing
