@@ -286,6 +286,29 @@ describe('applyChecks', () => {
     expect(() => applyChecks(REF, BODY, [{ text: 'sample', checked: true }])).toThrow(NoSuchEntryError)
   })
 
+  it('does not touch an entry in an HTML comment, behind an indented closer, or led by NBSP', () => {
+    const body = [
+      '- [ ] twin',
+      '<!--',
+      '- [ ] twin',
+      '- [ ] hidden',
+      '-->',
+      '```',
+      '    ```',
+      '- [ ] fenced',
+      '```',
+      ' - [ ] nbsp',
+    ].join('\n')
+
+    for (const text of ['hidden', 'fenced', 'nbsp']) {
+      expect(() => applyChecks(REF, body, [{ text, checked: true }])).toThrow(NoSuchEntryError)
+    }
+    // The comment's twin is not an entry, so the request is not ambiguous and lands outside it.
+    const { body: out, changed } = applyChecks(REF, body, [{ text: 'twin', checked: true }])
+    expect(changed).toBe(1)
+    expect(out).toBe(body.replace('- [ ] twin', '- [x] twin'))
+  })
+
   it('resolves text that also appears inside a fence to the entry outside it', () => {
     const body = ['- [ ] twin', '```', '- [ ] twin', '```'].join('\n')
     expect(applyChecks(REF, body, [{ text: 'twin', checked: true }]).body).toBe(

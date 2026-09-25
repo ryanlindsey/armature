@@ -194,16 +194,17 @@ export function applyChecks(
   requests: ChecklistRequest[],
 ): { body: string; changed: number } {
   // The capture group keeps each terminator as its own element, so joining on '' is the identity.
-  // Even indexes are lines, in the same order codeMask numbers them.
+  // Even indexes are lines, in the same order codeMask numbers them. The mask and the unindent
+  // are parseChecklist's own, so an entry item_get does not report can never be written.
   const parts = body.split(/(\r?\n)/)
-  const mask = codeMask(body)
+  const mask = checklistMask(body, parts.filter((_, i) => i % 2 === 0))
 
   const index = new Map<string, number[]>()
   let total = 0
   for (let i = 0; i < parts.length; i += 2) {
     const line = i / 2
     if (mask[line]) continue
-    const entry = ENTRY.exec(parts[i]!.trim())
+    const entry = ENTRY.exec(unindent(parts[i]!))
     if (!entry) continue
     const text = entry[2]!.trim()
     index.set(text, [...(index.get(text) ?? []), line])
@@ -231,7 +232,7 @@ export function applyChecks(
   for (const [line, checked] of targets) {
     const before = out[line * 2]!
     // The first box on the line is the entry's own: ENTRY anchors it right after the marker, and
-    // only whitespace can precede the marker on a line codeMask left unmasked.
+    // only ASCII spaces and tabs can precede the marker on a line checklistMask left unmasked.
     const current = /\[([ xX])\]/.exec(before)![1] !== ' '
     if (current === checked) continue
     out[line * 2] = before.replace(/\[[ xX]\]/, checked ? '[x]' : '[ ]')
