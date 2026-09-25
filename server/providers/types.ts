@@ -21,6 +21,9 @@ export type BoardItem = {
  */
 export type ChecklistEntry = { text: string; checked: boolean; heading: string | null }
 
+/** One requested checklist state change, addressed by the entry's exact text. */
+export type ChecklistRequest = { text: string; checked: boolean }
+
 export type StatusSemantics = {
   todo: string
   claimed: string

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { codeMask, parseChecklist } from '../server/providers/github/checklist.js'
+import {
+  AmbiguousEntryError,
+  ConflictingRequestError,
+  NoSuchEntryError,
+  applyChecks,
+  codeMask,
+  parseChecklist,
+} from '../server/providers/github/checklist.js'
 
 describe('codeMask', () => {
   it('marks backtick-fenced lines, delimiters included', () => {
@@ -235,5 +242,156 @@ describe('parseChecklist', () => {
   it('reads an entry after a comment closes, and after two comments on one line', () => {
     const body = ['<!-- a --> <!-- b', '- [ ] sample', 'c -->', '- [ ] after'].join('\n')
     expect(parseChecklist(body).map((e) => e.text)).toEqual(['after'])
+  })
+})
+
+const REF = { owner: 'acme', repo: 'web', number: 7 }
+
+const BODY = [
+  '## Acceptance',
+  '',
+  '- [ ] first',
+  '- [x] second',
+  '- [ ] third',
+  '',
+  '```',
+  '- [ ] sample',
+  '```',
+].join('\n')
+
+describe('applyChecks', () => {
+  it('changes exactly one character per entry whose state differs, and nothing else', () => {
+    const { body, changed } = applyChecks(REF, BODY, [
+      { text: 'first', checked: true },
+      { text: 'second', checked: true }, // already ticked — no byte may move
+      { text: 'third', checked: true },
+    ])
+
+    expect(changed).toBe(2)
+    expect(body).toHaveLength(BODY.length)
+
+    const differing = [...body].filter((c, i) => c !== BODY[i])
+    expect(differing).toEqual(['x', 'x'])
+
+    // Reverting those two characters yields the original, byte for byte.
+    expect(body.replace('- [x] first', '- [ ] first').replace('- [x] third', '- [ ] third')).toBe(BODY)
+  })
+
+  it('leaves an entry inside a fence alone', () => {
+    const { body } = applyChecks(REF, BODY, [{ text: 'first', checked: true }])
+    expect(body).toContain('- [ ] sample')
+  })
+
+  it('does not match an entry that exists only inside a fence', () => {
+    expect(() => applyChecks(REF, BODY, [{ text: 'sample', checked: true }])).toThrow(NoSuchEntryError)
+  })
+
+  it('does not touch an entry in an HTML comment, behind an indented closer, or led by NBSP', () => {
+    const body = [
+      '- [ ] twin',
+      '<!--',
+      '- [ ] twin',
+      '- [ ] hidden',
+      '-->',
+      '```',
+      '    ```',
+      '- [ ] fenced',
+      '```',
+      ' - [ ] nbsp',
+    ].join('\n')
+
+    for (const text of ['hidden', 'fenced', 'nbsp']) {
+      expect(() => applyChecks(REF, body, [{ text, checked: true }])).toThrow(NoSuchEntryError)
+    }
+    // The comment's twin is not an entry, so the request is not ambiguous and lands outside it.
+    const { body: out, changed } = applyChecks(REF, body, [{ text: 'twin', checked: true }])
+    expect(changed).toBe(1)
+    expect(out).toBe(body.replace('- [ ] twin', '- [x] twin'))
+  })
+
+  it('resolves text that also appears inside a fence to the entry outside it', () => {
+    const body = ['- [ ] twin', '```', '- [ ] twin', '```'].join('\n')
+    expect(applyChecks(REF, body, [{ text: 'twin', checked: true }]).body).toBe(
+      ['- [x] twin', '```', '- [ ] twin', '```'].join('\n'),
+    )
+  })
+
+  it('says "1 entry", not "1 entries"', () => {
+    expect(() => applyChecks(REF, '- [ ] only', [{ text: 'nope', checked: true }])).toThrow(/It has 1 entry\./)
+  })
+
+  it('is idempotent: a state an entry already holds moves no bytes', () => {
+    const { body, changed } = applyChecks(REF, BODY, [{ text: 'second', checked: true }])
+    expect(changed).toBe(0)
+    expect(body).toBe(BODY)
+  })
+
+  it('preserves an uppercase box it was not asked to change', () => {
+    const upper = '- [X] shouty'
+    const { body, changed } = applyChecks(REF, upper, [{ text: 'shouty', checked: true }])
+    expect(changed).toBe(0)
+    expect(body).toBe(upper)
+  })
+
+  it('unticks as readily as it ticks', () => {
+    const { body, changed } = applyChecks(REF, BODY, [{ text: 'second', checked: false }])
+    expect(changed).toBe(1)
+    expect(body).toContain('- [ ] second')
+  })
+
+  // GitHub stores bodies edited in a browser with CRLF. Splitting on \r?\n and rejoining on \n
+  // would move one byte per line and break the invariant on the very bodies it exists for.
+  it('keeps CRLF line endings byte for byte', () => {
+    const crlf = BODY.split('\n').join('\r\n')
+    const { body, changed } = applyChecks(REF, crlf, [{ text: 'first', checked: true }])
+    expect(changed).toBe(1)
+    expect(body).toHaveLength(crlf.length)
+    expect(body.replace('- [x] first', '- [ ] first')).toBe(crlf)
+  })
+
+  it('touches only the box, not a bracket pair in the entry text', () => {
+    const { body } = applyChecks(REF, '- [ ] keep [ ] this', [{ text: 'keep [ ] this', checked: true }])
+    expect(body).toBe('- [x] keep [ ] this')
+  })
+
+  it('raises NoSuchEntryError, naming the text and the count, and returns no body', () => {
+    expect(() => applyChecks(REF, BODY, [{ text: 'nope', checked: true }])).toThrow(NoSuchEntryError)
+    expect(() => applyChecks(REF, BODY, [{ text: 'nope', checked: true }])).toThrow(/"nope".*3 entries/s)
+  })
+
+  it('raises AmbiguousEntryError with 1-indexed line numbers', () => {
+    const dupe = ['- [ ] same', '- [ ] same'].join('\n')
+    expect(() => applyChecks(REF, dupe, [{ text: 'same', checked: true }])).toThrow(AmbiguousEntryError)
+    expect(() => applyChecks(REF, dupe, [{ text: 'same', checked: true }])).toThrow(/lines 1, 2/)
+  })
+
+  it('counts an entry requested twice with the same state once', () => {
+    const { body, changed } = applyChecks(REF, BODY, [
+      { text: 'first', checked: true },
+      { text: 'first', checked: true },
+    ])
+    expect(changed).toBe(1)
+    expect(body.replace('- [x] first', '- [ ] first')).toBe(BODY)
+  })
+
+  // Honouring the last would be a guess, and counting both would report two changes for zero
+  // moved bytes, which is exactly the lie the caller's read-back would then trust.
+  it('refuses a batch that asks for one entry in both states', () => {
+    const conflicting = () =>
+      applyChecks(REF, BODY, [
+        { text: 'first', checked: true },
+        { text: 'first', checked: false },
+      ])
+    expect(conflicting).toThrow(ConflictingRequestError)
+    expect(conflicting).toThrow(/"first".*Nothing was written/s)
+  })
+
+  it('is all-or-nothing: one bad request in a batch returns no body at all', () => {
+    expect(() =>
+      applyChecks(REF, BODY, [
+        { text: 'first', checked: true },
+        { text: 'nope', checked: true },
+      ]),
+    ).toThrow(NoSuchEntryError)
   })
 })

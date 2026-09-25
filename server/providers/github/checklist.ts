@@ -1,4 +1,5 @@
-import type { ChecklistEntry } from '../types.js'
+import { formatRef, type WorkItemRef } from '../../ref.js'
+import type { ChecklistEntry, ChecklistRequest } from '../types.js'
 
 // One boolean per line of `body`, true when that line is inside fenced or indented code.
 //
@@ -140,4 +141,103 @@ export function parseChecklist(body: string): ChecklistEntry[] {
   }
 
   return entries
+}
+
+export class NoSuchEntryError extends Error {
+  constructor(ref: WorkItemRef, text: string, available: number) {
+    super(
+      `${formatRef(ref)} has no checklist entry reading exactly "${text}". It has ${available} ` +
+        `${available === 1 ? 'entry' : 'entries'}. The match is whole-line and exact, on the text after the "- [ ] " marker: copy ` +
+        `it from item_get rather than retyping it. Nothing was written.`,
+    )
+    this.name = 'NoSuchEntryError'
+  }
+}
+
+export class AmbiguousEntryError extends Error {
+  constructor(ref: WorkItemRef, text: string, lines: number[]) {
+    super(
+      `${formatRef(ref)} has ${lines.length} checklist entries reading exactly "${text}", on ` +
+        `lines ${lines.join(', ')}. Which was meant cannot be decided here. Edit the issue to ` +
+        `make them distinct, then retry. Nothing was written.`,
+    )
+    this.name = 'AmbiguousEntryError'
+  }
+}
+
+export class ConflictingRequestError extends Error {
+  constructor(ref: WorkItemRef, text: string) {
+    super(
+      `The request for ${formatRef(ref)} asks for the checklist entry "${text}" to be both ticked ` +
+        `and unticked. Which was meant cannot be decided here. Send each entry once, then retry. ` +
+        `Nothing was written.`,
+    )
+    this.name = 'ConflictingRequestError'
+  }
+}
+
+// Rewrites only box characters. The body is rebuilt from its own lines with exactly the matched
+// boxes replaced, so every other byte — whitespace, fences, HTML, the entry's own text, and each
+// line's own terminator, CRLF included — survives unchanged. GitHub offers no per-entry API and
+// updateIssue takes no If-Match, so a whole-body write is the only mechanism available; this is
+// what keeps it honest.
+//
+// All-or-nothing: every request is resolved to a line before any line is touched, so one
+// unmatched or ambiguous request writes nothing at all.
+//
+// A line whose state already matches the request moves no bytes, uppercase [X] included. That
+// keeps `changed` equal to the number of characters that actually differ, which is the property
+// the caller's read-back and the invariant test both rest on.
+export function applyChecks(
+  ref: WorkItemRef,
+  body: string,
+  requests: ChecklistRequest[],
+): { body: string; changed: number } {
+  // The capture group keeps each terminator as its own element, so joining on '' is the identity.
+  // Even indexes are lines, in the same order codeMask numbers them. The mask and the unindent
+  // are parseChecklist's own, so an entry item_get does not report can never be written.
+  const parts = body.split(/(\r?\n)/)
+  const mask = checklistMask(body, parts.filter((_, i) => i % 2 === 0))
+
+  const index = new Map<string, number[]>()
+  let total = 0
+  for (let i = 0; i < parts.length; i += 2) {
+    const line = i / 2
+    if (mask[line]) continue
+    const entry = ENTRY.exec(unindent(parts[i]!))
+    if (!entry) continue
+    const text = entry[2]!.trim()
+    index.set(text, [...(index.get(text) ?? []), line])
+    total += 1
+  }
+
+  // Resolve everything first. Nothing below this loop may raise.
+  // Keyed by line, so an entry requested twice is written once: `changed` counts moved bytes.
+  const targets = new Map<number, boolean>()
+  for (const request of requests) {
+    const found = index.get(request.text)
+    if (!found) throw new NoSuchEntryError(ref, request.text, total)
+    if (found.length > 1) {
+      throw new AmbiguousEntryError(ref, request.text, found.map((line) => line + 1))
+    }
+    const line = found[0]!
+    if (targets.has(line) && targets.get(line) !== request.checked) {
+      throw new ConflictingRequestError(ref, request.text)
+    }
+    targets.set(line, request.checked)
+  }
+
+  const out = [...parts]
+  let changed = 0
+  for (const [line, checked] of targets) {
+    const before = out[line * 2]!
+    // The first box on the line is the entry's own: ENTRY anchors it right after the marker, and
+    // only ASCII spaces and tabs can precede the marker on a line checklistMask left unmasked.
+    const current = /\[([ xX])\]/.exec(before)![1] !== ' '
+    if (current === checked) continue
+    out[line * 2] = before.replace(/\[[ xX]\]/, checked ? '[x]' : '[ ]')
+    changed += 1
+  }
+
+  return { body: out.join(''), changed }
 }
