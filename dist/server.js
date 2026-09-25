@@ -18175,7 +18175,7 @@ var EpicUnsupportedError = class extends Error {
 var ChecklistUnsupportedError = class extends Error {
   constructor() {
     super(
-      "This board provider does not support checklists. Checklist entries are a Markdown task-list shape, and an adapter for a tracker without one declines to implement it rather than implementing it and throwing. Nothing was written."
+      "This board provider does not support checklists. Checklist entries are a Markdown task-list shape, and an adapter for a tracker without one declines to implement it rather than implementing it and throwing. Nothing was written. Change the entries in the tracker itself instead."
     );
     this.name = "ChecklistUnsupportedError";
   }
@@ -18215,16 +18215,16 @@ function checklistEntries(tool, value) {
   if (!Array.isArray(value) || value.length === 0) {
     throw new InvalidArgumentError(tool, "entries", "a non-empty array of { text, checked }", value);
   }
-  return value.map((raw) => {
+  return value.map((raw, i) => {
     if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      throw new InvalidArgumentError(tool, "entries[]", "an object of { text, checked }", raw);
+      throw new InvalidArgumentError(tool, `entries[${i}]`, "an object of { text, checked }", raw);
     }
     const entry = raw;
     if (typeof entry.text !== "string" || entry.text.trim() === "") {
-      throw new InvalidArgumentError(tool, "entries[].text", "the entry's exact text", entry.text);
+      throw new InvalidArgumentError(tool, `entries[${i}].text`, "the entry's exact text", entry.text);
     }
     if (typeof entry.checked !== "boolean") {
-      throw new InvalidArgumentError(tool, "entries[].checked", "true or false", entry.checked);
+      throw new InvalidArgumentError(tool, `entries[${i}].checked`, "true or false", entry.checked);
     }
     return { text: entry.text, checked: entry.checked };
   });

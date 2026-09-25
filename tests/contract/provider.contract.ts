@@ -18,7 +18,7 @@ import type { BoardProvider } from '../../server/providers/types.js'
  *
  * `checklist` is optional because `BoardProvider.check` is: a tracker whose items are not Markdown
  * has no task list to tick. A harness passes it — an item on the board whose checklist holds at
- * least two unticked entries — to declare that its adapter implements `check`, and the block
+ * least two unticked entries and one ticked — to declare that its adapter implements `check`, and the block
  * holds it to that. Absent, the block is skipped.
  */
 export type ContractFixture = {
@@ -222,6 +222,18 @@ export function describeBoardProvider(
 
         const after = await provider.getItem(ref)
         expect(after.checklist!.find((e) => e.text === target!.text)!.checked).toBe(true)
+      })
+
+      it('unticks an entry and reports it unticked when the item is read again', async () => {
+        const provider = await makeProvider()
+        const before = await provider.getItem(ref)
+        const target = before.checklist?.find((e) => e.checked)
+        expect(target, 'the fixture item must hold a ticked entry').toBeDefined()
+
+        await provider.check!(ref, [{ text: target!.text, checked: false }])
+
+        const after = await provider.getItem(ref)
+        expect(after.checklist!.find((e) => e.text === target!.text)!.checked).toBe(false)
       })
 
       it('leaves every entry unchanged when one entry in the batch is unmatched', async () => {

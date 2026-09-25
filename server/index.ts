@@ -210,7 +210,8 @@ export class ChecklistUnsupportedError extends Error {
     super(
       'This board provider does not support checklists. Checklist entries are a Markdown ' +
         'task-list shape, and an adapter for a tracker without one declines to implement it ' +
-        'rather than implementing it and throwing. Nothing was written.',
+        'rather than implementing it and throwing. Nothing was written. Change the entries in ' +
+        'the tracker itself instead.',
     )
     this.name = 'ChecklistUnsupportedError'
   }
@@ -274,16 +275,18 @@ function checklistEntries(tool: string, value: unknown): ChecklistRequest[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new InvalidArgumentError(tool, 'entries', 'a non-empty array of { text, checked }', value)
   }
-  return value.map((raw: unknown) => {
+  // Each error names the element by index: in a batch of ten, "entries[].text" leaves the caller
+  // to find the bad one themselves.
+  return value.map((raw: unknown, i: number) => {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-      throw new InvalidArgumentError(tool, 'entries[]', 'an object of { text, checked }', raw)
+      throw new InvalidArgumentError(tool, `entries[${i}]`, 'an object of { text, checked }', raw)
     }
     const entry = raw as Record<string, unknown>
     if (typeof entry.text !== 'string' || entry.text.trim() === '') {
-      throw new InvalidArgumentError(tool, 'entries[].text', "the entry's exact text", entry.text)
+      throw new InvalidArgumentError(tool, `entries[${i}].text`, "the entry's exact text", entry.text)
     }
     if (typeof entry.checked !== 'boolean') {
-      throw new InvalidArgumentError(tool, 'entries[].checked', 'true or false', entry.checked)
+      throw new InvalidArgumentError(tool, `entries[${i}].checked`, 'true or false', entry.checked)
     }
     return { text: entry.text, checked: entry.checked }
   })

@@ -830,6 +830,20 @@ describe('item_check', () => {
     expect(provider.check).not.toHaveBeenCalled()
   })
 
+  it('names the offending element by its index', async () => {
+    await expect(
+      dispatch(withCheck(), 'item_check', {
+        ref: 'acme/web#7', entries: [{ text: 'a', checked: true }, { text: 'b', checked: 'yes' }],
+      }, opts),
+    ).rejects.toThrow(/entries\[1\]\.checked/)
+  })
+
+  it('tells the caller what to do when the provider cannot do checklists', async () => {
+    const error = await dispatch(makeProvider(), 'item_check', { ref: 'acme/web#7', entries: one }, opts)
+      .catch((e: Error) => e)
+    expect((error as Error).message).toMatch(/instead/)
+  })
+
   it('hands the provider the ref and only the text and state of each entry', async () => {
     const provider = withCheck()
     await dispatch(
