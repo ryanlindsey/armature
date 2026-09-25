@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/ryanlindsey/armature/compare/armature-v0.5.0...armature-v0.5.1) (2026-09-25)
+
+
+### Documentation
+
+* add CONTRIBUTING, a code of conduct, and PR and issue templates ([#68](https://github.com/ryanlindsey/armature/issues/68)) ([dcf6d9a](https://github.com/ryanlindsey/armature/commit/dcf6d9a41cdaefc24551cbaf28b4985020b16c60))
+
 ## [0.5.0](https://github.com/ryanlindsey/armature/compare/armature-v0.4.0...armature-v0.5.0) (2026-09-25)
 
 
