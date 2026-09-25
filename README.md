@@ -126,8 +126,8 @@ item is whose epic, whether two repos collide on the same issue number — is de
 the board itself, not configured.
 
 Epic membership comes from GitHub's native sub-issue parent links. There is no separate
-in-body convention to declare it. `item_create` sets that link when you pass it a `parent`, so a
-fan-out of new issues lands under its epic and is ranked as such, rather than as a flat list
+in-body convention to declare it. `item_create` sets that link when you pass it a `parent`, and the blocking links when you pass
+`blockedBy`, so a fan-out of new issues lands under its epic, in sequence, rather than as a flat list
 somebody has to re-parent by hand afterwards.
 
 ## Credential
@@ -154,12 +154,12 @@ The MCP server exposes seven tools:
 
 | tool | does |
 | --- | --- |
-| `board_next` | The next actionable item, with the reason it won — or a blocked explanation. Narrow it with `repo` or `epic`. |
+| `board_next` | The next actionable item, with the reason it won — or a blocked explanation. Narrow it with `repo` or `epic`. Never returns an item titled `Spec:` or `Epic:`, and says which it skipped. |
 | `board_survey` | A normalized snapshot of the whole board: items, repositories, statuses, collisions. |
 | `item_get` | One work item's body, status, and epic (with the repository the epic lives in). |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
-| `item_create` | Create an issue, add it to the board, set it to the board's todo status, and optionally file it under a `parent` epic, so `board_next` can return it — correctly ranked — without a second call. Each step is verified, and a failure says exactly which steps landed. |
+| `item_create` | Create an issue, add it to the board, and set its status — todo unless `status` names another — then optionally file it under a `parent` and mark it blocked by `blockedBy`, so `board_next` can return it, correctly ranked, without a second call. Each step is verified, and a failure says exactly which steps landed. |
 | `epic_survey` | An epic and its children in working order: each child's status, labels, blockers, and linked pull requests with their branches, plus which child is next and why — the same answer `board_next` gives. A sub-issue that is not on the board is reported separately, never dropped. |
 
 Every reference in and out is `owner/repo#number`, or a `github.com` issue URL. A bare number is
@@ -190,6 +190,10 @@ or write the board if the armature tools are unavailable — it stops and says s
 `working-an-epic` is the controller above it: it surveys an epic with `epic_survey`, picks each
 child's base branch, and dispatches one subagent per child to run `working-the-board` — never
 implementing anything itself.
+
+`filing-a-plan` is where a plan starts: it files a design spec as a `Spec:` issue in the board's
+claimed status, then its plan as an `Epic:` with one child per task — or as a single issue — each
+linked to its parent and to what it waits on, through `item_create` alone.
 
 ## License
 

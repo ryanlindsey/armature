@@ -34,7 +34,8 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    and creates a pull request — by its text, never its number; see the rule below. Title is a
    Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
 10. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
-    Report the PR link and STOP.
+    Report the PR link. If the item's parent is titled `Spec:` — a one-task plan, filed with no
+    epic — end the report with: "after this merges, close `<spec ref>`." Then STOP.
 
 ## Without Superpowers
 
