@@ -17735,7 +17735,7 @@ function resolveAlias(map, token) {
 }
 
 // server/version.ts
-var VERSION = "0.5.1"; // x-release-please-version
+var VERSION = "0.6.0"; // x-release-please-version
 
 // server/index.ts
 var DRY_RUN = process.env.ARMATURE_DRY_RUN === "1";

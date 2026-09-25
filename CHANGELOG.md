@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0](https://github.com/ryanlindsey/armature/compare/armature-v0.5.1...armature-v0.6.0) (2026-09-25)
+
+
+### Features
+
+* **armature-epic:** add the command and document the epic run ([#74](https://github.com/ryanlindsey/armature/issues/74)) ([aa70ed5](https://github.com/ryanlindsey/armature/commit/aa70ed5865aa81e09e146f54e7bbdebedce307ed))
+* **epic_survey:** expose the epic survey as a tool ([#72](https://github.com/ryanlindsey/armature/issues/72)) ([32811c2](https://github.com/ryanlindsey/armature/commit/32811c2f450c5f192800d5fdac2bdf1603f72375))
+* **epic:** assemble an epic survey from the board and one enrichment query ([#70](https://github.com/ryanlindsey/armature/issues/70)) ([1f4b2f4](https://github.com/ryanlindsey/armature/commit/1f4b2f4e024e6f4f4197d8da122de270622a3afb))
+* **skill:** add working-an-epic, the controller for a whole-epic run ([#73](https://github.com/ryanlindsey/armature/issues/73)) ([ea617c0](https://github.com/ryanlindsey/armature/commit/ea617c0b755e14f176ae98faf1ff0f78ed468f15))
+
 ## [0.5.1](https://github.com/ryanlindsey/armature/compare/armature-v0.5.0...armature-v0.5.1) (2026-09-25)
 
 
