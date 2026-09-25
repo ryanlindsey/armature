@@ -17378,6 +17378,86 @@ async function surveyEpic(client, snapshot, ref) {
   };
 }
 
+// server/providers/github/checklist.ts
+function codeMask(body) {
+  const mask = [];
+  let fence = null;
+  for (const rawLine of body.split(/\r?\n/)) {
+    const { columns, rest } = indentation(rawLine);
+    if (fence) {
+      mask.push(true);
+      const run3 = fenceRun(rest, fence.char);
+      if (columns <= 3 && run3 >= fence.len && /^[ \t]*$/.test(rest.slice(run3))) fence = null;
+      continue;
+    }
+    if (columns <= 3) {
+      const open2 = /^(`{3,}|~{3,})/.exec(rest);
+      if (open2) {
+        const marker = open2[1];
+        fence = { char: marker[0], len: marker.length };
+        mask.push(true);
+        continue;
+      }
+    }
+    mask.push(columns >= 4);
+  }
+  return mask;
+}
+function indentation(line) {
+  let columns = 0;
+  let i = 0;
+  for (; i < line.length; i++) {
+    if (line[i] === " ") columns += 1;
+    else if (line[i] === "	") columns += 4 - columns % 4;
+    else break;
+  }
+  return { columns, rest: line.slice(i) };
+}
+function fenceRun(text, char) {
+  let n = 0;
+  while (text[n] === char) n++;
+  return n;
+}
+var ENTRY = /^[-*+][ \t]+\[([ xX])\][ \t]+(.+)$/;
+var HEADING = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/;
+function unindent(rawLine) {
+  return rawLine.replace(/^[ \t]+/, "");
+}
+function checklistMask(body, lines) {
+  const code = codeMask(body);
+  let inComment = false;
+  return lines.map((line, i) => {
+    if (code[i]) return true;
+    const masked = inComment;
+    let at = 0;
+    for (; ; ) {
+      const next = inComment ? line.indexOf("-->", at) : line.indexOf("<!--", at);
+      if (next < 0) break;
+      at = next + (inComment ? 3 : 4);
+      inComment = !inComment;
+    }
+    return masked;
+  });
+}
+function parseChecklist(body) {
+  const lines = body.split(/\r?\n/);
+  const mask = checklistMask(body, lines);
+  const entries = [];
+  let heading = null;
+  for (const [i, rawLine] of lines.entries()) {
+    if (mask[i]) continue;
+    const line = unindent(rawLine);
+    const head = HEADING.exec(line);
+    if (head) {
+      heading = head[1].trim();
+      continue;
+    }
+    const entry = ENTRY.exec(line);
+    if (entry) entries.push({ text: entry[2].trim(), checked: entry[1] !== " ", heading });
+  }
+  return entries;
+}
+
 // server/providers/github/items.ts
 var NotOnBoardError = class extends Error {
   constructor(ref, board) {
@@ -17441,6 +17521,7 @@ async function getItem(client, board, ref) {
     id: issue2.id,
     title: issue2.title,
     body: issue2.body ?? "",
+    checklist: parseChecklist(issue2.body ?? ""),
     state: issue2.state,
     status: projectItem?.fieldValueByName?.name ?? null,
     projectItemId: projectItem?.id ?? null,
@@ -17630,6 +17711,7 @@ async function createItem(client, board, snapshot, input, options = {}) {
       id: "(dry-run)",
       title: input.title,
       body: input.body,
+      checklist: parseChecklist(input.body),
       state: "OPEN",
       status,
       projectItemId: "(dry-run)",
@@ -17874,7 +17956,7 @@ var TOOLS = [
   },
   {
     name: "item_get",
-    description: "One work item: body, status, and its epic with the repository the epic lives in.",
+    description: "One work item: body, status, its task-list checklist, and its epic with the repository the epic lives in.",
     inputSchema: {
       type: "object",
       properties: { ref: { type: "string", description: "owner/repo#number" } },

@@ -27,7 +27,7 @@ const snapshot = {
 function detail(status: string) {
   return {
     ref, id: 'I_1', title: 't', body: '', state: 'OPEN' as const,
-    status, projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+    checklist: [], status, projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
   }
 }
 

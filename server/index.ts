@@ -42,7 +42,7 @@ export const TOOLS = [
   },
   {
     name: 'item_get',
-    description: 'One work item: body, status, and its epic with the repository the epic lives in.',
+    description: 'One work item: body, status, its task-list checklist, and its epic with the repository the epic lives in.',
     inputSchema: {
       type: 'object',
       properties: { ref: { type: 'string', description: 'owner/repo#number' } },

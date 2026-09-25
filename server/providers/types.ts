@@ -8,7 +8,18 @@ export type BoardItem = {
   status: string | null
   state: 'OPEN' | 'CLOSED'
   parent: WorkItemRef | null
+  checklist?: ChecklistEntry[]
 }
+
+/**
+ * One task-list entry in a work item's body.
+ *
+ * `heading` is the nearest preceding ATX heading, and is context for the caller's judgment, not
+ * a claim about meaning: the server does not decide which heading means "acceptance". Optional
+ * on BoardItem because a tracker whose items are not Markdown has none to report; required on
+ * ItemDetail, which is the GitHub adapter's enriched read.
+ */
+export type ChecklistEntry = { text: string; checked: boolean; heading: string | null }
 
 export type StatusSemantics = {
   todo: string
