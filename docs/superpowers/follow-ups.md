@@ -17,10 +17,12 @@ vanishes reads as one that was never there.
 **The configuration gate for `parseEpicFromBody`.** The function and its 27 tests are intact and
 exported, but nothing calls them and esbuild tree-shakes them out of the shipped bundle. The spec
 describes this fallback as "an optional **declared** pattern", which is the gate that does not yet
-exist. Before wiring it into any live path, close the hole named in the comment above it: HTML
-blocks such as `<pre>` or `<details>`. (Tab-stop-expanded indentation, the other hole, is closed:
-`codeMask` counts CommonMark columns.) Three rounds of
-tightening a heuristic failed before it was cut; a fourth should not start without that gate.
+exist. Before wiring `parseEpicFromBody` into any live path, close the hole named in the comment
+above it: HTML blocks such as `<pre>` or `<details>`. Tab-stop-expanded indentation, the other
+hole, is closed: `codeMask` counts CommonMark columns. `codeMask` itself now feeds `item_check`
+through `parseChecklist`, and the Deferred note on its HTML-block hole says why the hole is
+tolerable there. Three rounds of tightening a heuristic failed before it was cut; a fourth should
+not start without that gate.
 
 **Cross-epic prerequisite blocking.** `SKILL.md` carries the "Depends on" policy, but nothing
 enforces it. The spec allocates judgment to skills and facts to the server, so this belongs in the
@@ -87,6 +89,18 @@ Code is correct in all four; only the tests are missing or misplaced.
   task. Three gaps: a nested task indented four or more columns is masked as indented code,
   because `codeMask` is not list-aware; ordered (`1. [ ]`) and blockquoted (`> - [ ]`) tasks are
   not read; and setext or empty ATX headings are not recognised as headings.
+- **Checklist entries indented four or more columns are not tickable.** The first gap above, seen
+  from the live path: a nested acceptance criterion is absent from `item_get`'s checklist, so it is
+  neither tickable by `item_check` nor listed in the receipt. That is the cheap direction of the
+  asymmetry the rule exists for, but nested task lists are common enough in real issue bodies to be
+  worth recording rather than rediscovering.
+- **`codeMask`'s HTML-block hole is now on a live path.** A `- [ ]` inside `<pre>` or `<details>`
+  reads as a real entry. The instruction under *Work to do* — close the HTML hole before wiring
+  `codeMask` into a live path — was written for `parseEpicFromBody`, whose failure mode was a silent
+  wrong-epic attachment that steers what work is selected next. Here the worst case is one character
+  changed inside a code sample, bounded by the byte-diff invariant, visible in the issue's edit
+  history and named in the PR's acceptance receipt, and reachable only if the skill found real
+  evidence for a criterion that is actually a code sample. Still worth closing; no longer blocking.
 - **`GraphQLError` is never asserted by class** — `client.test.ts` matches message text only.
 - **`ResolvedConfig.verify`** is parsed and never read server-side. The skill reads
   `.armature.json` itself, so this is harmless; either expose it through a tool or drop the field.
