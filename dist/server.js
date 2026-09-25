@@ -17017,8 +17017,13 @@ function formatRef(ref) {
 
 // server/providers/github/client.ts
 var GraphQLError = class extends Error {
-  constructor(message) {
+  /**
+   * The `type` of each error GitHub reported, e.g. NOT_FOUND. Kept so a caller can turn a failure
+   * it understands into an error that names the fix, rather than matching on message text.
+   */
+  constructor(message, types = []) {
     super(message);
+    this.types = types;
     this.name = "GraphQLError";
   }
 };
@@ -17068,7 +17073,10 @@ var GitHubClient = class {
     }
     if (payload.errors?.length) {
       if (payload.errors.some((e) => e.type === "INSUFFICIENT_SCOPES")) throw new MissingScopeError();
-      throw new GraphQLError(payload.errors.map((e) => e.message).join("; "));
+      throw new GraphQLError(
+        payload.errors.map((e) => e.message).join("; "),
+        payload.errors.flatMap((e) => e.type ? [e.type] : [])
+      );
     }
     if (!response.ok && payload.message) {
       throw new GraphQLError(`GitHub API error (${response.status}): ${payload.message}`);
@@ -17266,9 +17274,10 @@ query($owner:String!,$name:String!,$number:Int!){
         nodes{
           number
           repository{ owner{ login } name }
-          labels(first:20){ nodes{ name } }
-          blockedBy(first:10){ nodes{ number repository{ owner{ login } name } } }
+          labels(first:20){ pageInfo{ hasNextPage } nodes{ name } }
+          blockedBy(first:10){ pageInfo{ hasNextPage } nodes{ number repository{ owner{ login } name } } }
           closedByPullRequestsReferences(first:10,includeClosedPrs:true){
+            pageInfo{ hasNextPage }
             nodes{ number state url headRefName baseRefName }
           }
         }
@@ -17279,19 +17288,29 @@ query($owner:String!,$name:String!,$number:Int!){
 var EpicNotFoundError = class extends Error {
   constructor(ref) {
     super(
-      `${formatRef(ref)} does not exist, or is not visible to this credential. Nothing was read from the board. Check the reference, and that the credential can read that repository.`
+      `${formatRef(ref)} does not exist, or is not visible to this credential. Nothing on the board was changed. Check the reference, and that the credential can read that repository.`
     );
     this.name = "EpicNotFoundError";
   }
 };
 var TruncatedEpicError = class extends Error {
-  constructor(ref) {
+  constructor(ref, what, page, fix) {
     super(
-      `${formatRef(ref)} has more than ${SUB_ISSUE_PAGE} sub-issues, more than one page of the survey holds. Reporting the first ${SUB_ISSUE_PAGE} would silently drop the rest, so nothing is reported. Split the epic into smaller ones.`
+      `${formatRef(ref)} has more ${what} than one page of the epic survey holds (${page}). Reporting the first ${page} would silently drop the rest, so nothing is reported. ${fix}`
     );
     this.name = "TruncatedEpicError";
   }
 };
+var NESTED = [
+  { field: "labels", what: "labels", page: 20, fix: "Remove labels it does not need." },
+  { field: "blockedBy", what: "blockers", page: 10, fix: "Remove blockers it does not need." },
+  {
+    field: "closedByPullRequestsReferences",
+    what: "linked pull requests",
+    page: 10,
+    fix: "Unlink the pull requests that no longer close it."
+  }
+];
 var refOf = (n) => ({
   owner: n.repository.owner.login,
   repo: n.repository.name,
@@ -17299,19 +17318,30 @@ var refOf = (n) => ({
 });
 var keyOf = (ref) => formatRef(ref).toLowerCase();
 async function surveyEpic(client, snapshot, ref) {
-  const data = await client.graphql(EPIC_ENRICHMENT, {
-    owner: ref.owner,
-    name: ref.repo,
-    number: ref.number
-  });
+  let data;
+  try {
+    data = await client.graphql(EPIC_ENRICHMENT, {
+      owner: ref.owner,
+      name: ref.repo,
+      number: ref.number
+    });
+  } catch (error2) {
+    if (error2 instanceof GraphQLError && error2.types.includes("NOT_FOUND")) throw new EpicNotFoundError(ref);
+    throw error2;
+  }
   const issue2 = data.repository?.issue;
   if (!issue2) throw new EpicNotFoundError(ref);
-  if (issue2.subIssues.pageInfo?.hasNextPage) throw new TruncatedEpicError(ref);
+  if (issue2.subIssues.pageInfo?.hasNextPage) {
+    throw new TruncatedEpicError(ref, "sub-issues", SUB_ISSUE_PAGE, "Split the epic into smaller ones.");
+  }
   const onBoard = new Map(snapshot.items.map((i) => [keyOf(i.ref), i]));
   const children = [];
   const offBoard = [];
   for (const node2 of issue2.subIssues.nodes) {
     const childRef = refOf(node2);
+    for (const { field, what, page, fix } of NESTED) {
+      if (node2[field]?.pageInfo?.hasNextPage) throw new TruncatedEpicError(childRef, what, page, fix);
+    }
     const item = onBoard.get(keyOf(childRef));
     if (!item) {
       offBoard.push(childRef);

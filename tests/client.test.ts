@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { GitHubClient, MissingScopeError, RateLimitError } from '../server/providers/github/client.js'
+import { GitHubClient, GraphQLError, MissingScopeError, RateLimitError } from '../server/providers/github/client.js'
 
 const credential = { token: 'secret-value', source: 'gh-cli' as const }
 
@@ -66,6 +66,17 @@ describe('GitHubClient error mapping', () => {
       respond({ data: { partial: true }, errors: [{ message: 'boom' }] }),
     )
     await expect(client.graphql('query', {})).rejects.toThrow(/boom/)
+  })
+
+  // A caller that can name the failure — EpicNotFoundError for a NOT_FOUND — needs the type, not
+  // only the message text.
+  it('keeps the error types GitHub reported', async () => {
+    const client = new GitHubClient(credential, async () =>
+      respond({ data: { repository: { issue: null } }, errors: [{ type: 'NOT_FOUND', message: 'Could not resolve' }] }),
+    )
+    const err = await client.graphql('query', {}).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(GraphQLError)
+    expect((err as GraphQLError).types).toEqual(['NOT_FOUND'])
   })
 
   it('never puts the credential in an error message', async () => {

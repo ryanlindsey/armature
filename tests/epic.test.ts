@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { EpicNotFoundError, TruncatedEpicError, surveyEpic } from '../server/providers/github/epic.js'
 import type { BoardSnapshot } from '../server/providers/types.js'
-import type { GitHubClient } from '../server/providers/github/client.js'
+import { GraphQLError, type GitHubClient } from '../server/providers/github/client.js'
 
 const EPIC = { owner: 'acme', repo: 'web', number: 10 }
 
@@ -26,6 +26,13 @@ const snapshot: BoardSnapshot = {
 }
 
 function clientReturning(nodes: unknown[], hasNextPage = false): GitHubClient {
+  // Every connection says it is complete unless a test says otherwise.
+  nodes = (nodes as Record<string, any>[]).map((n) => ({
+    ...n,
+    labels: { pageInfo: { hasNextPage: false }, ...n.labels },
+    blockedBy: { pageInfo: { hasNextPage: false }, ...n.blockedBy },
+    closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, ...n.closedByPullRequestsReferences },
+  }))
   return {
     graphql: async () => ({
       repository: { issue: { title: 'Epic: ship it', subIssues: { pageInfo: { hasNextPage }, nodes } } },
@@ -172,10 +179,30 @@ describe('surveyEpic', () => {
     expect(result.next.because).toMatch(/Nothing is actionable/)
   })
 
+  // The real client throws on GitHub's NOT_FOUND before any null reaches surveyEpic, so the fake
+  // throws the way it does. A fake returning a bare null tested a path production never takes.
   it('raises a named error for an epic that does not exist', async () => {
-    const client = { graphql: async () => ({ repository: { issue: null } }) } as unknown as GitHubClient
+    const client = {
+      graphql: async () => {
+        throw new GraphQLError('Could not resolve to an Issue with the number of 10.', ['NOT_FOUND'])
+      },
+    } as unknown as GitHubClient
     await expect(surveyEpic(client, snapshot, EPIC)).rejects.toThrow(EpicNotFoundError)
     await expect(surveyEpic(client, snapshot, EPIC)).rejects.toThrow(/acme\/web#10/)
+  })
+
+  it('still raises a named error if GitHub answers null without an error', async () => {
+    const client = { graphql: async () => ({ repository: { issue: null } }) } as unknown as GitHubClient
+    await expect(surveyEpic(client, snapshot, EPIC)).rejects.toThrow(EpicNotFoundError)
+  })
+
+  it('lets any other GraphQL failure through unchanged', async () => {
+    const client = {
+      graphql: async () => {
+        throw new GraphQLError('Something went wrong', ['INTERNAL'])
+      },
+    } as unknown as GitHubClient
+    await expect(surveyEpic(client, snapshot, EPIC)).rejects.toThrow(/Something went wrong/)
   })
 
   // Fifty is the page. A fifty-first child silently missing is a child nobody works and nobody is
@@ -183,5 +210,23 @@ describe('surveyEpic', () => {
   it('refuses an epic with more sub-issues than one page holds', async () => {
     const client = clientReturning([node('web', 11), node('web', 12), node('api', 11)], true)
     await expect(surveyEpic(client, snapshot, EPIC)).rejects.toThrow(TruncatedEpicError)
+  })
+
+  // Each dropped entry is a wrong ledger row: a missing open PR reads "interrupted" and is worked
+  // twice, a missing blocker picks the wrong base branch, a missing label claims a human's child.
+  it.each([
+    ['labels', 'labels'],
+    ['blockedBy', 'blockers'],
+    ['closedByPullRequestsReferences', 'linked pull requests'],
+  ])('refuses a child whose %s overflow one page, naming the connection', async (field, words) => {
+    const client = clientReturning([
+      node('web', 11),
+      node('web', 12, { [field]: { pageInfo: { hasNextPage: true }, nodes: [] } }),
+      node('api', 11),
+    ])
+    const err = await surveyEpic(client, snapshot, EPIC).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(TruncatedEpicError)
+    expect((err as Error).message).toContain('acme/web#12')
+    expect((err as Error).message).toContain(words)
   })
 })
