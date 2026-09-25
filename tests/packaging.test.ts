@@ -244,6 +244,29 @@ describe('the commands declare the tools they actually use', () => {
     expect(fm).toMatch(/\bEnterWorktree\b/)
   })
 
+  it('/armature-epic pre-approves the armature tools and the Skill tool', () => {
+    const fm = frontmatter(readText('commands/armature-epic.md'))
+    expect(fm).toContain(ARMATURE_TOOLS)
+    expect(fm).toMatch(/\bSkill\b/)
+  })
+
+  // The whole skill is a dispatch loop: without these it fails at the first child, not at load.
+  it('/armature-epic pre-approves the subagent dispatch its loop is built on', () => {
+    const fm = frontmatter(readText('commands/armature-epic.md'))
+    expect(fm).toMatch(/\bAgent\b/)
+    expect(fm).toMatch(/\bTask\b/)
+  })
+
+  // The controller never edits a file, runs a suite, or touches git or gh — working-an-epic says
+  // so. Declaring those would pre-approve them for the one agent told never to use them, and would
+  // not reach the children anyway: a command's allowed-tools are not inherited by subagents.
+  it('/armature-epic declares nothing the controller is forbidden to do', () => {
+    const fm = frontmatter(readText('commands/armature-epic.md'))
+    const tools = /^allowed-tools:(.*)$/m.exec(fm)?.[1] ?? ''
+    expect(tools).not.toMatch(/\b(Read|Edit|Write|Grep|Glob|EnterWorktree)\b/)
+    expect(tools).not.toMatch(/Bash\(/)
+  })
+
   it('names the MCP server the plugin actually declares', () => {
     const plugin = read('.claude-plugin/plugin.json')
     expect(Object.keys(plugin.mcpServers)).toEqual(['armature'])
@@ -276,6 +299,38 @@ describe('/armature-next separates the ref from the human\'s instructions', () =
 
   it('is documented in the README', () => {
     expect(section(readText('README.md'), 'Commands')).toMatch(/no worktree/i)
+  })
+})
+
+// Same shape as /armature-next: the arguments carry an epic ref and, optionally, the human's
+// instructions — "no worktree" is the one working-an-epic settles once for the whole run. Only the
+// ref may reach epic_survey, and which epic to work is never the command's to choose.
+describe('/armature-epic takes an epic and the human\'s instructions', () => {
+  const command = (() => {
+    try {
+      return readText('commands/armature-epic.md')
+    } catch {
+      return ''
+    }
+  })()
+  const body = command.replace(/^---\n[\s\S]*?\n---/, '')
+
+  it('advertises the epic and the instructions in its argument hint', () => {
+    expect(frontmatter(command)).toMatch(/argument-hint:.*epic.*no worktree/i)
+  })
+
+  it('uses the working-an-epic skill', () => {
+    expect(body).toMatch(/armature:working-an-epic/)
+  })
+
+  it('passes only the ref to epic_survey and the rest to the skill', () => {
+    expect(body).toMatch(/epic_survey[^.]*nothing else/i)
+    expect(body).toMatch(/rest[\s\S]{0,40}instructions/i)
+  })
+
+  it('asks which epic rather than choosing one', () => {
+    expect(body).toMatch(/ask which epic/i)
+    expect(body).toMatch(/do not[^.]*survey the board/i)
   })
 })
 
@@ -580,6 +635,37 @@ describe('the README surfaces the Superpowers relationship above the fold', () =
   // failure the spec diagnoses in the four diverging copies of the prior slash command.
   it('states the relationship in one place rather than twice', () => {
     expect(section(readme, 'Skill')).not.toContain('github.com/obra/superpowers')
+  })
+})
+
+describe('the README documents the epic run alongside the single-item one', () => {
+  const readme = readText('README.md')
+
+  it('explains the stack and who merges it', () => {
+    const epic = section(readme, 'Working a whole epic')
+    expect(epic).toMatch(/armature-epic/)
+    expect(epic).toMatch(/stack/i)
+    expect(epic).toMatch(/bottom-up/i)
+  })
+
+  it('names the three reasons the run stops, and that running out of work is not one', () => {
+    const epic = section(readme, 'Working a whole epic')
+    expect(epic).toMatch(/collision/i)
+    expect(epic).toMatch(/review/i)
+    expect(epic).toMatch(/verify/i)
+    expect(epic).toMatch(/needs a person/i)
+  })
+
+  it('lists the command and the skill where the others are listed', () => {
+    expect(section(readme, 'Commands')).toMatch(/\/armature-epic/)
+    expect(section(readme, 'Skill')).toMatch(/working-an-epic/)
+  })
+
+  it('keeps Superpowers ahead of the epic run, and the epic run ahead of Configuration', () => {
+    const superpowers = readme.indexOf('## Better with Superpowers')
+    const epic = readme.indexOf('## Working a whole epic')
+    expect(epic).toBeGreaterThan(superpowers)
+    expect(epic).toBeLessThan(readme.indexOf('## Configuration'))
   })
 })
 

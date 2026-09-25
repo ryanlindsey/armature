@@ -13,7 +13,9 @@ qualified as `owner/repo#number`, and a human — never the agent — merging th
 [Superpowers](https://github.com/obra/superpowers) models one repository, one worktree, one branch —
 and none of its skills knows what a ticket is. Armature is the layer above: it decides which work is
 next across every repository on the board, and hands the doing to Superpowers. Together they are the
-whole path from "what's next" to an open PR — see [Better with Superpowers](#better-with-superpowers).
+whole path from "what's next" to an open PR — see [Better with Superpowers](#better-with-superpowers)
+— and armature can walk a whole epic that way, one stacked PR per child — see
+[Working a whole epic](#working-a-whole-epic).
 
 ## Install
 
@@ -62,6 +64,45 @@ Armature reimplements none of Superpowers and requires none of it. Without it th
 run, with a plain feature branch, a hand-written failing test, a re-read of the diff, and
 `gh pr create` standing in for steps 5, 6, 7 and 9 — the skill's
 [Without Superpowers](./skills/working-the-board/SKILL.md#without-superpowers) table says which.
+
+## Working a whole epic
+
+`/armature-next` works one item. `/armature-epic` works every actionable child of one epic, in
+order, without stopping between them:
+
+```
+/armature-epic ryanlindsey/armature#51
+
+  52  claim → worktree → TDD → review → PR #A → main
+  53  claim → worktree(base issue-52) → … → PR #B → issue-52
+  54  claim → worktree(base issue-53) → … → PR #C → issue-53
+
+  3 PRs stacked A ← B ← C. Merge bottom-up.
+```
+
+A child that declares a blocker branches from **that blocker's branch**, not from the default
+branch, so its pull request contains the work it depends on. A child with no blocker branches from
+the default branch and gets an independent PR. Armature never merges the stack — you do, bottom-up,
+and GitHub retargets each pull request as its base lands.
+
+Each child is worked by its own subagent running the same ten steps as `/armature-next`, so the run
+survives an epic of any length: the controlling session never reads the implementation, and it
+re-reads its place from the board every iteration rather than remembering it.
+
+The run stops for three things and nothing else: a cross-child file collision, a review that cannot
+be satisfied, and a red verify. A child that needs a person is skipped rather than claimed, and when
+skipping leaves nothing actionable the run ends and tells you what it left behind — running out of
+work is the run finishing, not a failure.
+
+Two things to know before a long unattended run:
+
+- **The children's tools need approving at the session level.** A command's `allowed-tools` do not
+  reach the subagents it dispatches, so each child's edits, `npm` and `git` calls prompt unless your
+  permission mode or `settings.json` already allows them.
+- **Stacked PRs may not show up on the board.** GitHub links a `Closes #N` only on a PR that
+  targets the default branch, so a stacked child's PR is likely invisible to `epic_survey` until
+  its base merges. The run keeps its own record of each child's PR to cope, which a resumed session
+  does not have — see [follow-ups](./docs/superpowers/follow-ups.md).
 
 ## Configuration
 
@@ -126,6 +167,10 @@ refused, and armature never emits one.
   board, on a branch, ending in a PR. Given a reference, works that item instead. With Superpowers
   it isolates the work in a git worktree without asking; add `no worktree` to the arguments to
   branch in the current checkout for that run.
+- **`/armature-epic <owner/repo#number or issue URL>`** — work every actionable child of that epic,
+  each on a branch stacked on its blocker, each ending in its own PR — see
+  [Working a whole epic](#working-a-whole-epic). Takes `no worktree` the same way, once for every
+  child.
 - **`/armature-doctor`** — reports what armature derived about your board (its identity,
   repositories, inferred status meanings, any colliding issue numbers) so you can check it
   before trusting it.
@@ -137,6 +182,10 @@ implement, review, verify, open a PR, hand back — and it never merges. It comp
 where that is installed and falls back to plain instructions where it is not, as
 [above](#better-with-superpowers). Either way it refuses to fall back to raw `gh` commands to read
 or write the board if the armature tools are unavailable — it stops and says so.
+
+`working-an-epic` is the controller above it: it surveys an epic with `epic_survey`, picks each
+child's base branch, and dispatches one subagent per child to run `working-the-board` — never
+implementing anything itself.
 
 ## License
 
