@@ -1,8 +1,9 @@
 import type { BoardRef, BoardSource } from '../../config.js'
 import type { WorkItemRef } from '../../ref.js'
-import type { BoardItem, BoardProvider, BoardSnapshot, CreateInput } from '../types.js'
+import type { BoardItem, BoardProvider, BoardSnapshot, CreateInput, EpicSurvey } from '../types.js'
 import { surveyBoard } from './board.js'
 import type { GitHubClient } from './client.js'
+import { surveyEpic } from './epic.js'
 import { claim, createItem, getItem, setStatus } from './items.js'
 
 export type ProviderOptions = {
@@ -52,6 +53,12 @@ export class GitHubBoardProvider implements BoardProvider {
 
   async getItem(ref: WorkItemRef): Promise<BoardItem> {
     return getItem(this.client, this.board, ref)
+  }
+
+  // A read: no invalidate(). It shares the cached snapshot, so its statuses are as fresh as the
+  // last write left them — which is exactly as fresh as board_next's.
+  async epic(ref: WorkItemRef): Promise<EpicSurvey> {
+    return surveyEpic(this.client, await this.survey(), ref)
   }
 
   async claim(ref: WorkItemRef): Promise<BoardItem> {

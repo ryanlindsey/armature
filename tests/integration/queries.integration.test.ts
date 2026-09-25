@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readCliTokenFromGh, resolveCredential } from '../../server/auth.js'
 import { REPO_BOARDS_QUERY } from '../../server/config-io.js'
 import { BOARD_QUERY } from '../../server/providers/github/board.js'
+import { EPIC_ENRICHMENT } from '../../server/providers/github/epic.js'
 import { GitHubClient } from '../../server/providers/github/client.js'
 import { ADD_SUB_ISSUE, PARENT_ID } from '../../server/providers/github/items.js'
 
@@ -65,6 +66,26 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
       number: content.number,
     })
     expect(data.repository?.issue?.id).toMatch(/^I_/)
+  })
+
+  it('accepts EPIC_ENRICHMENT against the live schema', async () => {
+    const board = await (await client()).graphql<any>(BOARD_QUERY, {
+      owner: owner!,
+      number,
+      cursor: null,
+    })
+    const content = board.repositoryOwner?.projectV2?.items?.nodes?.find(
+      (n: any) => n?.content?.number != null,
+    )?.content
+    expect(content, 'the integration board must hold at least one issue').toBeDefined()
+
+    const data = await (await client()).graphql<any>(EPIC_ENRICHMENT, {
+      owner: content.repository.owner.login,
+      name: content.repository.name,
+      number: content.number,
+    })
+    // Any issue will do: this checks the document, not the issue. subIssues may legitimately be empty.
+    expect(data.repository?.issue?.subIssues?.nodes).toBeDefined()
   })
 
   // -------------------------------------------------------------------------------------------
