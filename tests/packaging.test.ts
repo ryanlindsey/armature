@@ -344,6 +344,22 @@ describe('the skill carries the policies the server deliberately does not enforc
   it('says what to do when a prerequisite is not done', () => {
     expect(skill).toMatch(/prerequisite/i)
   })
+
+  // The server will flip any box a caller names (ryanlindsey/armature#57); nothing but this text
+  // stops a model ticking one it has no evidence for.
+  it('tells the model to tick only what evidence settles', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/evidence/i)
+    expect(rules).toMatch(/item_check/)
+  })
+
+  it('forbids un-ticking a box a person ticked', () => {
+    expect(section(skill, 'Rules')).toMatch(/never un-?tick/i)
+  })
+
+  it('settles criteria in the loop, not only in the rules', () => {
+    expect(section(skill, 'The loop')).toMatch(/item_check/)
+  })
 })
 
 // The server reports an epic as facts (ryanlindsey/armature#58); nothing but the skill's text

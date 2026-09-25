@@ -87,6 +87,17 @@ Code is correct in all four; only the tests are missing or misplaced.
   task. Three gaps: a nested task indented four or more columns is masked as indented code,
   because `codeMask` is not list-aware; ordered (`1. [ ]`) and blockquoted (`> - [ ]`) tasks are
   not read; and setext or empty ATX headings are not recognised as headings.
+- **Checklist entries indented four or more spaces are not tickable.** The first gap above, seen
+  from the live path: a nested acceptance criterion reports as unsettled and `item_check` cannot
+  address it. That is the cheap direction of the asymmetry the rule exists for, but nested task
+  lists are common enough in real issue bodies to be worth recording rather than rediscovering.
+- **`codeMask`'s HTML-block hole is now on a live path.** A `- [ ]` inside `<pre>` or `<details>`
+  reads as a real entry. The instruction under *Work to do* — close the HTML hole before wiring
+  `codeMask` into a live path — was written for `parseEpicFromBody`, whose failure mode was a
+  silent wrong-epic attachment that steers what work is selected next. Here the worst case is one
+  character changed inside a code sample, bounded by the byte-diff invariant and visible in the
+  PR diff, and reachable only if the skill found real evidence for a criterion that is actually a
+  code sample. Still worth closing; no longer blocking.
 - **`GraphQLError` is never asserted by class** — `client.test.ts` matches message text only.
 - **`ResolvedConfig.verify`** is parsed and never read server-side. The skill reads
   `.armature.json` itself, so this is harmless; either expose it through a tool or drop the field.

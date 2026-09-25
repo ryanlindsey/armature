@@ -47,7 +47,7 @@ verifies and hands back; Superpowers does everything in between:
   5  Superpowers  using-git-worktrees              an isolated worktree, green baseline
   6  Superpowers  test-driven-development          red → green → refactor
   7  Superpowers  requesting-code-review           a fresh subagent reads the diff
-  8  armature     verify                           runs the .armature.json verify list
+  8  armature     verify + settle criteria         verify list, then ticks what evidence settles
   9  Superpowers  finishing-a-development-branch   pushes and opens the pull request
  10  armature     item_status                      → the board's review status
 ```
@@ -59,6 +59,10 @@ in checkout. Every reference in and out is qualified for exactly that reason.
 Step 9 is where the two plugins have to be told apart. `finishing-a-development-branch` offers to
 merge the branch locally; armature takes its push-and-open-a-PR option instead and never asks. The
 never-merge rule is armature's, not that skill's — a human merges.
+
+Step 8 ticks an acceptance box only when this run produced evidence for it, and step 9's PR body
+carries the receipt — each criterion with its evidence, or with why it is still open — so unsettled
+criteria reach the human reviewer rather than blocking the PR.
 
 Armature reimplements none of Superpowers and requires none of it. Without it the same ten steps
 run, with a plain feature branch, a hand-written failing test, a re-read of the diff, and

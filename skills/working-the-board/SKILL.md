@@ -28,11 +28,15 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    failing, then the implementation.
 7. **Review.** Use `superpowers:requesting-code-review`. Fix Critical and Important findings before
    the PR exists; carry Minor ones into the PR body so the human reviewer sees them.
-8. **Verify.** Run every command in this repository's `.armature.json` `verify` list. If there is no
-   such list, run the project's test suite.
+8. **Verify, then settle the item's acceptance criteria.** Run every command in this repository's
+   `.armature.json` `verify` list. If there is no such list, run the project's test suite. Then take
+   the item's checklist from `item_get` and decide, entry by entry, whether evidence from this run
+   settles it — see the evidence rule below. Tick the settled ones with `item_check`, in one call.
+   Leave the rest.
 9. **Open a PR.** Use `superpowers:finishing-a-development-branch`, taking the option that pushes
    and creates a pull request — by its text, never its number; see the rule below. Title is a
-   Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
+   Conventional Commit. Body contains `Closes #<number>` and the acceptance receipt: each settled
+   entry with the evidence that settled it, each unsettled entry with why. **Do not merge.**
 10. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
     Report the PR link. If the item's parent — read in step 2 — is titled `Spec:`, a one-task
     plan filed with no epic, end the report with: "after this merges, close `<spec ref>`." Then STOP.
@@ -45,7 +49,7 @@ Most installs will not have it. Every step above still happens; only what carrie
 | --- | --- |
 | 5. Isolate | If `git status --porcelain` shows anything — uncommitted or untracked changes — say so and STOP rather than branching over them. Otherwise `git fetch`, then branch as `issue-<number>-<slug>` from `origin/<default-branch>`. |
 | 6. Implement | Write the failing test first, watch it fail, then write the implementation. |
-| 7. Review | Re-read the whole diff against the item's acceptance criteria before opening the PR. |
+| 7. Review | Re-read the whole diff before opening the PR. |
 | 9. Open a PR | `git push -u origin <branch>`, then `gh pr create`. |
 
 Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does the never-merge rule.
@@ -86,4 +90,15 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   merges. Keep the worktree; the human iterates on review feedback there. That skill also asks which
   branch the work split from — answer with the repository's default branch — and re-runs the suite
   step 8 has just run, which is wasteful but harmless.
+- **Tick a box only on evidence, and never untick one.** `item_check` flips whatever box it is
+  handed; deciding which boxes deserve it is this rule. An entry is settled only by something
+  observed in this run: a command the criterion names, run and passed; a test in the diff that
+  asserts it, with the suite green; a `verify` command that covers it; or a filesystem fact read
+  directly. It is **not** settled by an implementer's report that it did it, by a plausible reading
+  of the diff, or by a test whose name merely suggests it. Never tick an entry you did not observe
+  evidence for, however obviously true it looks, and **never untick** one a person ticked — if you
+  cannot confirm it, leave it and say so in the receipt. An unticked box costs nothing. A wrongly
+  ticked one launders an unverified assertion into a record a reviewer will trust, which is the
+  failure that ended `parseEpicFromBody`. Unsettled criteria never block the PR: armature reports
+  the gap and hands back, because a person reads every PR anyway.
 - **Never merge.** Armature opens PRs; people merge them.
