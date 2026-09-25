@@ -39,6 +39,14 @@ function makeClient() {
         status = 'In progress'
         return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_1' } } }
       }
+      // Before the single-issue branch: EPIC_ENRICHMENT also selects issue(number:$number).
+      if (query.includes('subIssues')) {
+        return {
+          repository: {
+            issue: { title: 'Epic', subIssues: { pageInfo: { hasNextPage: false }, nodes: [] } },
+          },
+        }
+      }
       if (query.includes('issue(number:$number)')) {
         return {
           repository: {
@@ -166,5 +174,28 @@ describe('GitHubBoardProvider invalidates its snapshot after a write', () => {
     await provider.survey()
 
     expect(surveys.count).toBe(surveysBefore + 1)
+  })
+})
+
+describe('GitHubBoardProvider.epic', () => {
+  it('reuses the cached snapshot rather than surveying the board per call', async () => {
+    const { client, surveys } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.epic({ owner: 'acme', repo: 'web', number: 1 })
+    await provider.epic({ owner: 'acme', repo: 'web', number: 1 })
+
+    expect(surveys.count).toBe(1)
+  })
+
+  it('performs no write', async () => {
+    const { client, currentStatus } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.epic({ owner: 'acme', repo: 'web', number: 1 })
+
+    const documents = (client.graphql as unknown as { mock: { calls: [string][] } }).mock.calls.map((c) => c[0])
+    expect(documents.some((d) => /\bmutation\b/.test(d))).toBe(false)
+    expect(currentStatus()).toBe('Todo')
   })
 })

@@ -17017,8 +17017,13 @@ function formatRef(ref) {
 
 // server/providers/github/client.ts
 var GraphQLError = class extends Error {
-  constructor(message) {
+  /**
+   * The `type` of each error GitHub reported, e.g. NOT_FOUND. Kept so a caller can turn a failure
+   * it understands into an error that names the fix, rather than matching on message text.
+   */
+  constructor(message, types = []) {
     super(message);
+    this.types = types;
     this.name = "GraphQLError";
   }
 };
@@ -17068,7 +17073,10 @@ var GitHubClient = class {
     }
     if (payload.errors?.length) {
       if (payload.errors.some((e) => e.type === "INSUFFICIENT_SCOPES")) throw new MissingScopeError();
-      throw new GraphQLError(payload.errors.map((e) => e.message).join("; "));
+      throw new GraphQLError(
+        payload.errors.map((e) => e.message).join("; "),
+        payload.errors.flatMap((e) => e.type ? [e.type] : [])
+      );
     }
     if (!response.ok && payload.message) {
       throw new GraphQLError(`GitHub API error (${response.status}): ${payload.message}`);
@@ -17194,6 +17202,168 @@ async function surveyBoard(client, board, boardSource) {
     items,
     repositories: [...new Set(items.map((i) => `${i.ref.owner}/${i.ref.repo}`))].sort(),
     collisions: computeCollisions(items)
+  };
+}
+
+// server/providers/github/next.ts
+var EPIC_TITLE = /\bEpic\s+(\d+)\b/i;
+function epicOrder(title, number3) {
+  const match2 = EPIC_TITLE.exec(title);
+  return match2 ? Number(match2[1]) : number3;
+}
+function key(ref) {
+  return formatRef(ref);
+}
+function selectNext(snapshot, options) {
+  const { todo } = snapshot.semantics;
+  const parents = new Set(snapshot.items.filter((i) => i.parent).map((i) => key(i.parent)));
+  const isEpic = (i) => parents.has(key(i.ref));
+  const children = snapshot.items.filter((i) => !isEpic(i));
+  const repoLower = options.repo?.toLowerCase();
+  const inRepo = repoLower !== void 0 ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower) : children;
+  const epicKey = options.epic ? key(options.epic).toLowerCase() : void 0;
+  const underEpic = epicKey !== void 0 ? inRepo.filter((i) => i.parent !== null && key(i.parent).toLowerCase() === epicKey) : inRepo;
+  const actionable = underEpic.filter((i) => i.status === todo && i.state === "OPEN");
+  if (actionable.length === 0) {
+    if (inRepo.length === 0 && options.repo !== void 0) {
+      return {
+        kind: "blocked",
+        because: `No items matching filter "${options.repo}" found on board.`
+      };
+    }
+    if (underEpic.length === 0 && options.epic) {
+      return {
+        kind: "blocked",
+        because: `No items matching epic filter ${formatRef(options.epic)} found on board.`
+      };
+    }
+    const scope = options.repo !== void 0 ? ` in "${options.repo}"` : "";
+    return {
+      kind: "blocked",
+      because: `Nothing is actionable${scope}: no open item sits in "${todo}". ${underEpic.length} item(s) were considered.`
+    };
+  }
+  const epicRank = /* @__PURE__ */ new Map();
+  for (const item of snapshot.items) {
+    if (isEpic(item)) epicRank.set(key(item.ref), epicOrder(item.title, item.ref.number));
+  }
+  const ranked = [...actionable].sort((a, b) => {
+    const ra = a.parent ? epicRank.get(key(a.parent)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+    const rb = b.parent ? epicRank.get(key(b.parent)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+    if (ra !== rb) return ra - rb;
+    return a.ref.number - b.ref.number;
+  });
+  const chosen = ranked[0];
+  const parentNote = chosen.parent ? `the lowest-numbered open "${todo}" child of ${formatRef(chosen.parent)}` : `the lowest-numbered open "${todo}" item with no epic`;
+  return {
+    kind: "item",
+    item: chosen,
+    because: `${formatRef(chosen.ref)} is ${parentNote}. ${ranked.length - 1} other item(s) queued behind it.`
+  };
+}
+
+// server/providers/github/epic.ts
+var SUB_ISSUE_PAGE = 50;
+var EPIC_ENRICHMENT = `
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    issue(number:$number){
+      title
+      subIssues(first:${SUB_ISSUE_PAGE}){
+        pageInfo{ hasNextPage }
+        nodes{
+          number
+          repository{ owner{ login } name }
+          labels(first:20){ pageInfo{ hasNextPage } nodes{ name } }
+          blockedBy(first:10){ pageInfo{ hasNextPage } nodes{ number repository{ owner{ login } name } } }
+          closedByPullRequestsReferences(first:10,includeClosedPrs:true){
+            pageInfo{ hasNextPage }
+            nodes{ number state url headRefName baseRefName }
+          }
+        }
+      }
+    }
+  }
+}`;
+var EpicNotFoundError = class extends Error {
+  constructor(ref) {
+    super(
+      `${formatRef(ref)} does not exist, or is not visible to this credential. Nothing on the board was changed. Check the reference, and that the credential can read that repository.`
+    );
+    this.name = "EpicNotFoundError";
+  }
+};
+var TruncatedEpicError = class extends Error {
+  constructor(ref, what, page, fix) {
+    super(
+      `${formatRef(ref)} has more ${what} than one page of the epic survey holds (${page}). Reporting the first ${page} would silently drop the rest, so nothing is reported. ${fix}`
+    );
+    this.name = "TruncatedEpicError";
+  }
+};
+var NESTED = [
+  { field: "labels", what: "labels", page: 20, fix: "Remove labels it does not need." },
+  { field: "blockedBy", what: "blockers", page: 10, fix: "Remove blockers it does not need." },
+  {
+    field: "closedByPullRequestsReferences",
+    what: "linked pull requests",
+    page: 10,
+    fix: "Unlink the pull requests that no longer close it."
+  }
+];
+var refOf = (n) => ({
+  owner: n.repository.owner.login,
+  repo: n.repository.name,
+  number: n.number
+});
+var keyOf = (ref) => formatRef(ref).toLowerCase();
+async function surveyEpic(client, snapshot, ref) {
+  let data;
+  try {
+    data = await client.graphql(EPIC_ENRICHMENT, {
+      owner: ref.owner,
+      name: ref.repo,
+      number: ref.number
+    });
+  } catch (error2) {
+    if (error2 instanceof GraphQLError && error2.types.includes("NOT_FOUND")) throw new EpicNotFoundError(ref);
+    throw error2;
+  }
+  const issue2 = data.repository?.issue;
+  if (!issue2) throw new EpicNotFoundError(ref);
+  if (issue2.subIssues.pageInfo?.hasNextPage) {
+    throw new TruncatedEpicError(ref, "sub-issues", SUB_ISSUE_PAGE, "Split the epic into smaller ones.");
+  }
+  const onBoard = new Map(snapshot.items.map((i) => [keyOf(i.ref), i]));
+  const children = [];
+  const offBoard = [];
+  for (const node2 of issue2.subIssues.nodes) {
+    const childRef = refOf(node2);
+    for (const { field, what, page, fix } of NESTED) {
+      if (node2[field]?.pageInfo?.hasNextPage) throw new TruncatedEpicError(childRef, what, page, fix);
+    }
+    const item = onBoard.get(keyOf(childRef));
+    if (!item) {
+      offBoard.push(childRef);
+      continue;
+    }
+    children.push({
+      ref: childRef,
+      title: item.title,
+      status: item.status,
+      state: item.state,
+      labels: (node2.labels?.nodes ?? []).map((l) => l.name),
+      blockedBy: (node2.blockedBy?.nodes ?? []).map(refOf),
+      pullRequests: node2.closedByPullRequestsReferences?.nodes ?? []
+    });
+  }
+  children.sort((a, b) => a.ref.number - b.ref.number || keyOf(a.ref).localeCompare(keyOf(b.ref)));
+  const chosen = selectNext(snapshot, { epic: ref });
+  return {
+    epic: { ref, title: issue2.title },
+    children,
+    offBoard,
+    next: chosen.kind === "item" ? { ref: chosen.item.ref, because: chosen.because } : { ref: null, because: chosen.because }
   };
 }
 
@@ -17479,6 +17649,11 @@ var GitHubBoardProvider = class {
   async getItem(ref) {
     return getItem(this.client, this.board, ref);
   }
+  // A read: no invalidate(). It shares the cached snapshot, so its statuses are as fresh as the
+  // last write left them — which is exactly as fresh as board_next's.
+  async epic(ref) {
+    return surveyEpic(this.client, await this.survey(), ref);
+  }
   async claim(ref) {
     const snapshot = await this.survey();
     try {
@@ -17557,63 +17732,6 @@ function resolveAlias(map, token) {
   const target = map.get(match2[1]);
   if (!target) return null;
   return { owner: target.owner, repo: target.repo, number: Number(match2[2]) };
-}
-
-// server/providers/github/next.ts
-var EPIC_TITLE = /\bEpic\s+(\d+)\b/i;
-function epicOrder(title, number3) {
-  const match2 = EPIC_TITLE.exec(title);
-  return match2 ? Number(match2[1]) : number3;
-}
-function key(ref) {
-  return formatRef(ref);
-}
-function selectNext(snapshot, options) {
-  const { todo } = snapshot.semantics;
-  const parents = new Set(snapshot.items.filter((i) => i.parent).map((i) => key(i.parent)));
-  const isEpic = (i) => parents.has(key(i.ref));
-  const children = snapshot.items.filter((i) => !isEpic(i));
-  const repoLower = options.repo?.toLowerCase();
-  const inRepo = repoLower !== void 0 ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower) : children;
-  const epicKey = options.epic ? key(options.epic).toLowerCase() : void 0;
-  const underEpic = epicKey !== void 0 ? inRepo.filter((i) => i.parent !== null && key(i.parent).toLowerCase() === epicKey) : inRepo;
-  const actionable = underEpic.filter((i) => i.status === todo && i.state === "OPEN");
-  if (actionable.length === 0) {
-    if (inRepo.length === 0 && options.repo !== void 0) {
-      return {
-        kind: "blocked",
-        because: `No items matching filter "${options.repo}" found on board.`
-      };
-    }
-    if (underEpic.length === 0 && options.epic) {
-      return {
-        kind: "blocked",
-        because: `No items matching epic filter ${formatRef(options.epic)} found on board.`
-      };
-    }
-    const scope = options.repo !== void 0 ? ` in "${options.repo}"` : "";
-    return {
-      kind: "blocked",
-      because: `Nothing is actionable${scope}: no open item sits in "${todo}". ${underEpic.length} item(s) were considered.`
-    };
-  }
-  const epicRank = /* @__PURE__ */ new Map();
-  for (const item of snapshot.items) {
-    if (isEpic(item)) epicRank.set(key(item.ref), epicOrder(item.title, item.ref.number));
-  }
-  const ranked = [...actionable].sort((a, b) => {
-    const ra = a.parent ? epicRank.get(key(a.parent)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-    const rb = b.parent ? epicRank.get(key(b.parent)) ?? Number.MAX_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
-    if (ra !== rb) return ra - rb;
-    return a.ref.number - b.ref.number;
-  });
-  const chosen = ranked[0];
-  const parentNote = chosen.parent ? `the lowest-numbered open "${todo}" child of ${formatRef(chosen.parent)}` : `the lowest-numbered open "${todo}" item with no epic`;
-  return {
-    kind: "item",
-    item: chosen,
-    because: `${formatRef(chosen.ref)} is ${parentNote}. ${ranked.length - 1} other item(s) queued behind it.`
-  };
 }
 
 // server/version.ts

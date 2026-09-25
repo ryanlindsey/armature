@@ -8,7 +8,14 @@ export type PageOf<T> = {
 }
 
 export class GraphQLError extends Error {
-  constructor(message: string) {
+  /**
+   * The `type` of each error GitHub reported, e.g. NOT_FOUND. Kept so a caller can turn a failure
+   * it understands into an error that names the fix, rather than matching on message text.
+   */
+  constructor(
+    message: string,
+    public readonly types: string[] = [],
+  ) {
     super(message)
     this.name = 'GraphQLError'
   }
@@ -81,7 +88,10 @@ export class GitHubClient {
     if (payload.errors?.length) {
       if (payload.errors.some((e) => e.type === 'INSUFFICIENT_SCOPES')) throw new MissingScopeError()
       // Partial data alongside errors is the failure mode that hides corruption. Refuse it.
-      throw new GraphQLError(payload.errors.map((e) => e.message).join('; '))
+      throw new GraphQLError(
+        payload.errors.map((e) => e.message).join('; '),
+        payload.errors.flatMap((e) => (e.type ? [e.type] : [])),
+      )
     }
 
     // If response is not ok and has a message, include it in the error

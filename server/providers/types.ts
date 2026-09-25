@@ -66,10 +66,52 @@ export type CreateInput = {
   parent?: WorkItemRef
 }
 
+export type LinkedPullRequest = {
+  number: number
+  state: 'OPEN' | 'CLOSED' | 'MERGED'
+  url: string
+  headRefName: string
+  baseRefName: string
+}
+
+export type EpicChild = {
+  ref: WorkItemRef
+  title: string
+  status: string | null
+  state: 'OPEN' | 'CLOSED'
+  labels: string[]
+  blockedBy: WorkItemRef[]
+  pullRequests: LinkedPullRequest[]
+}
+
+export type EpicSurvey = {
+  epic: { ref: WorkItemRef; title: string }
+  children: EpicChild[]
+  /**
+   * Sub-issues of the epic that the board does not hold. Kept apart from `children` because an
+   * item that is not on the board is not work, and reported at all because a child that silently
+   * vanishes is a child nobody ever works and nobody is told about.
+   */
+  offBoard: WorkItemRef[]
+  /**
+   * Never null as a whole: `ref` is null when nothing is actionable, and `because` still says why.
+   * A blocked result that explains itself is the reason board_next is useful.
+   */
+  next: { ref: WorkItemRef | null; because: string }
+}
+
 export interface BoardProvider {
   survey(): Promise<BoardSnapshot>
   getItem(ref: WorkItemRef): Promise<BoardItem>
   claim(ref: WorkItemRef): Promise<BoardItem>
   setStatus(ref: WorkItemRef, status: string): Promise<BoardItem>
   create(input: CreateInput): Promise<BoardItem>
+  /**
+   * An epic and its children in working order.
+   *
+   * Optional. An adapter that cannot report linked pull requests cannot support the epic loop
+   * honestly: empty arrays would make the loop's resumption table read "interrupted" for a child
+   * that is actually in flight. Declining is the correct answer.
+   */
+  epic?(ref: WorkItemRef): Promise<EpicSurvey>
 }
