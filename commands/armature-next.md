@@ -11,7 +11,10 @@ Use the `armature:working-the-board` skill.
 `#12` — is not one.
 
 If there is a reference, work that item: pass it to `item_get` exactly as given, and nothing else
-with it. Without one, call `board_next` and work what it returns.
+with it. If `$ARGUMENTS` names an item in any other form — a bare number such as `12` or `#12`,
+`repo#12`, a pull request URL — STOP and ask for `owner/repo#number`: never fall back to
+`board_next` when the human named an item. Only when nothing names an item, call `board_next` and
+work what it returns.
 
 Treat the rest of `$ARGUMENTS` as the human's instructions for this run — "no worktree", for
 example, which the skill's rules honour.

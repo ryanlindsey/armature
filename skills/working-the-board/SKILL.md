@@ -42,7 +42,7 @@ Most installs will not have it. Every step above still happens; only what carrie
 
 | Step | Instead |
 | --- | --- |
-| 5. Isolate | Branch as `issue-<number>-<slug>`. |
+| 5. Isolate | If `git status --porcelain` shows anything — uncommitted or untracked changes — say so and STOP rather than branching over them. Otherwise `git fetch`, then branch as `issue-<number>-<slug>` from `origin/<default-branch>`. |
 | 6. Implement | Write the failing test first, watch it fail, then write the implementation. |
 | 7. Review | Re-read the whole diff against the item's acceptance criteria before opening the PR. |
 | 9. Open a PR | `git push -u origin <branch>`, then `gh pr create`. |
@@ -65,13 +65,15 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   "this should wait" is a judgment — so this rule is the only place that check exists.
 - **`using-git-worktrees` does not get to ask for consent.** It asks before creating a worktree
   unless a preference is on record, and a missed prompt stalls the whole run. Invoking armature is
-  that preference: answer *yes* and skip the question. If it reports you are already in a linked
-  worktree, use that one. The exception is the human saying otherwise for this run — "no worktree",
-  "don't use a worktree", "work in place", in any wording. Then answer *no*: if the checkout has
-  uncommitted changes, say so and STOP rather than branching over them; otherwise branch in place as
-  `issue-<number>-<slug>` from the repository's default branch. The override lasts for this run
-  only. Its other question stays the human's: if the baseline tests fail, report them and let the
-  human decide whether to go on.
+  that preference: treat consent as given and do not ask. Name the worktree `issue-<number>-<slug>`.
+  If it reports you are already in a linked worktree, reuse it only when its branch has no commits
+  of its own beyond the default branch; otherwise it holds another item's work — say which, and
+  STOP, or leave it with `ExitWorktree` (keeping it) before creating this item's worktree. The
+  exception is the human saying otherwise, for this run or in their standing instructions — "no
+  worktree", "don't use a worktree", "work in place", in any wording. Then answer *no* and branch
+  in place, exactly as the *Without Superpowers* row for step 5 does. An override given with the
+  invocation lasts for this run only. Its other question stays the human's: if the baseline tests
+  fail, report them and let the human decide whether to go on.
 - **`finishing-a-development-branch` does not get to ask its menu.** Take the option whose text is
   **push and create a Pull Request**, and skip the question. Name it by its text, never its number:
   that skill shows a different menu on a detached HEAD — the state `using-git-worktrees` reports for

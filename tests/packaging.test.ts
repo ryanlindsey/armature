@@ -263,12 +263,15 @@ describe('/armature-next separates the ref from the human\'s instructions', () =
   })
 
   it('passes only the ref to item_get and the rest to the skill', () => {
-    expect(body).toMatch(/item_get/)
-    expect(body).toMatch(/instructions/i)
+    expect(body).toMatch(/item_get[^.]*nothing else/i)
+    expect(body).toMatch(/rest[\s\S]{0,40}instructions/i)
   })
 
-  it('still never reads a bare number as a ref', () => {
-    expect(body).toMatch(/bare/i)
+  // Splitting the arguments opened a hole: "ref or board_next" read literally sends `#12` to
+  // board_next, which claims an item the human never named. Naming an item badly must stop.
+  it('stops, rather than falling back to board_next, when an item is named without a ref', () => {
+    expect(body).toMatch(/bare number[\s\S]{0,200}STOP/)
+    expect(body).toMatch(/never\s+fall\s+back\s+to\s+`board_next`/i)
   })
 
   it('is documented in the README', () => {
@@ -359,14 +362,32 @@ describe('the skill composes with Superpowers rather than reimplementing it', ()
     expect(loop).toMatch(/without asking/i)
 
     const rules = section(skill, 'Rules')
-    expect(rules).toMatch(/consent/i)
+    expect(rules).toMatch(/does not get to ask for consent/i)
   })
 
   it('lets the human decline the worktree for one run', () => {
     const rules = section(skill, 'Rules')
-    expect(rules).toMatch(/no worktree/i)
-    expect(rules, 'says where the work goes instead').toContain('issue-<number>-<slug>')
-    expect(rules, 'refuses to branch over local changes').toMatch(/uncommitted/i)
+    expect(rules).toMatch(/no\s+worktree/i)
+    expect(rules, 'branches in place by the step-5 fallback row').toMatch(/Without Superpowers\*?\s+row\s+for\s+step\s+5/i)
+    expect(rules, 'the override does not stick').toMatch(/this\s+run\s+only/i)
+  })
+
+  // The session stays in a run's worktree afterwards, so a second run in the same session lands in
+  // Step 0's "already in a linked worktree" branch. Reusing it blindly puts item B's commits on item
+  // A's branch — and into A's open PR.
+  it('reuses an existing worktree only when it carries no other item\'s work', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/already in a linked worktree[\s\S]{0,300}no commits/i)
+    expect(rules).toMatch(/ExitWorktree/)
+  })
+
+  // With Superpowers declined and without Superpowers at all, the work lands the same way: the two
+  // in-place paths must not drift apart.
+  it('branches in place the same way with or without Superpowers', () => {
+    const row = /^\| 5\. Isolate \|.*$/m.exec(section(skill, 'Without Superpowers'))?.[0] ?? ''
+    expect(row).toContain('issue-<number>-<slug>')
+    expect(row).toMatch(/uncommitted/i)
+    expect(row).toMatch(/origin/)
   })
 
   // Answering consent in advance must not swallow the one question that is really the human's.
