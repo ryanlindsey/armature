@@ -26,6 +26,25 @@ enforces it. The spec allocates judgment to skills and facts to the server, so t
 skill — enforcing it server-side would require parsing "Depends on" out of free prose, which is
 the hazard that ended `parseEpicFromBody`.
 
+**`working-the-board` still reads prerequisites out of prose.** `blockedBy` is a real GraphQL field
+returning structured refs, and `epic_survey` already reports it, so the single-item skill's
+prerequisite rule should probably read that instead of parsing "Depends on" out of English — the
+same argument that ended `parseEpicFromBody`. Deferred from ryanlindsey/armature#58 because it
+changes the existing skill rather than adding one.
+
+**`working-the-board` has no clause for a stacked prerequisite.** Its step 3 stops on any
+prerequisite not in the board's done status. Inside an epic run the blocker's PR is deliberately
+unmerged, so `working-an-epic` carries the reachability ruling (`git merge-base --is-ancestor`) in
+each child's brief, and the child relies on the brief overriding the skill's text. That works, but
+it is an override the single-item skill never names. Naming it there — "unless the brief that
+dispatched you rules the prerequisite reachable from your base" — would make the composition
+explicit. Deferred from ryanlindsey/armature#62, whose epic forbids modifying `working-the-board`.
+
+**`humanLabel` is not read by any code.** ryanlindsey/armature#58 declares it in `.armature.json`
+and `working-an-epic` consults it, but `server/config.ts` neither parses nor validates it, so a typo
+in the key is silently a board with no human-only children. `/armature-doctor` reporting it would be
+the cheap fix.
+
 ## Residual coverage gaps
 
 Code is correct in all four; only the tests are missing or misplaced.

@@ -294,6 +294,76 @@ describe('the skill carries the policies the server deliberately does not enforc
   })
 })
 
+// The server reports an epic as facts (ryanlindsey/armature#58); nothing but the skill's text
+// decides what to do with them. Read leniently so a missing file fails each policy by name rather
+// than crashing collection.
+describe('the epic skill carries the policies the server cannot enforce', () => {
+  const skill = (() => {
+    try {
+      return readText('skills/working-an-epic/SKILL.md')
+    } catch {
+      return ''
+    }
+  })()
+
+  it('re-derives the epic from the board each iteration rather than remembering it', () => {
+    expect(skill).toMatch(/epic_survey/)
+    expect(skill).toMatch(/every iteration|each iteration/i)
+  })
+
+  it('treats a claimed child with no PR as interrupted', () => {
+    expect(skill).toMatch(/interrupted/i)
+    expect(skill).toMatch(/re-?dispatch/i)
+  })
+
+  it('names the base branch rule', () => {
+    expect(skill).toMatch(/base branch/i)
+    expect(skill).toMatch(/blockedBy|blocker/)
+  })
+
+  it('asks the worktree question once per epic, not once per child', () => {
+    expect(skill).toMatch(/worktree/i)
+    expect(skill).toMatch(/once/i)
+  })
+
+  // working-the-board's own prerequisite rule stops on any blocker not in the done status, and a
+  // stacked blocker's PR is never merged mid-run — so without this ruling in the brief, every
+  // stacked child stops at step 3.
+  it('hands the child the reachability ruling for a stacked prerequisite', () => {
+    expect(skill).toMatch(/merge-base --is-ancestor/)
+    expect(section(skill, 'The loop')).toMatch(/prerequisite/i)
+  })
+
+  it('never claims a child that needs a person', () => {
+    expect(skill).toMatch(/never claim/i)
+  })
+
+  it('ends the run rather than pausing when nothing actionable is left', () => {
+    expect(skill).toMatch(/terminal condition/i)
+  })
+
+  it('lists exactly three reasons to pause', () => {
+    const flags = /## Red flags[\s\S]*?(?=\n## )/.exec(skill)
+    expect(flags, 'expected a "## Red flags" section').not.toBeNull()
+    expect(flags![0].match(/^\d\. /gm)).toHaveLength(3)
+  })
+
+  // Armature sets no threshold of its own here; drifting from Superpowers on a number nobody
+  // asked to change is how two skills stop composing.
+  it("defers to subagent-driven-development's fix-round breaker", () => {
+    expect(skill).toMatch(/five/i)
+    expect(skill).toMatch(/subagent-driven-development/)
+  })
+
+  it('refuses to merge', () => {
+    expect(skill).toMatch(/[Nn]ever merge/)
+  })
+
+  it('uses working-the-board as its loop body rather than reimplementing it', () => {
+    expect(skill).toMatch(/armature:working-the-board/)
+  })
+})
+
 // The spec states the composition as a four-skill chain — using-git-worktrees →
 // test-driven-development → requesting-code-review → finishing-a-development-branch — with
 // armature bracketing it: picking and claiming before, opening the PR and moving the item after.
