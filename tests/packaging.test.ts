@@ -783,3 +783,82 @@ describe('a contributor can find the rules before CI teaches them', () => {
     }
   })
 })
+
+// Filing a spec and its plan used to be a hand-run `gh` recipe held in one agent's memory, and it
+// omitted the spec entirely (ryanlindsey/armature#75). The skill is now the only place that
+// judgment lives, so its text is asserted the way the other two skills' are. Read leniently so a
+// missing file fails each policy by name.
+describe('the filing skill carries the policies the server does not enforce', () => {
+  const skill = (() => {
+    try {
+      return readText('skills/filing-a-plan/SKILL.md')
+    } catch {
+      return ''
+    }
+  })()
+
+  it('triggers at the spec and plan handoff, instead of docs/superpowers', () => {
+    const fm = frontmatter(skill)
+    expect(fm).toMatch(/^name: filing-a-plan$/m)
+    expect(fm).toMatch(/spec/i)
+    expect(fm).toMatch(/plan/i)
+    expect(fm).toMatch(/docs\/superpowers/)
+  })
+
+  it('names both title prefixes', () => {
+    expect(skill).toMatch(/`Spec: /)
+    expect(skill).toMatch(/`Epic: /)
+  })
+
+  it('files the spec in the claimed status, read from board_survey, and never in todo', () => {
+    expect(skill).toMatch(/semantics\.claimed/)
+    expect(skill).toMatch(/never[^.]*todo/i)
+  })
+
+  it('knows both plan shapes', () => {
+    expect(skill).toMatch(/single issue/i)
+    expect(skill).toMatch(/`parent: <spec>`/)
+    expect(skill).toMatch(/`parent: <epic>`/)
+  })
+
+  it('files children in dependency order, with blockedBy and the prose line', () => {
+    expect(skill).toMatch(/dependency order/i)
+    expect(skill).toMatch(/blockedBy/)
+    expect(skill).toMatch(/Depends on/)
+  })
+
+  it('never retries item_create after a named error', () => {
+    expect(skill).toMatch(/never retry/i)
+    expect(skill).toMatch(/second issue/i)
+  })
+
+  it('files through armature, never gh', () => {
+    expect(skill).toMatch(/item_create/)
+    expect(skill).toMatch(/never[^.]*`gh`/i)
+  })
+})
+
+describe('the run reminds the human to close the spec', () => {
+  it('working-the-board step 10 reminds when the item\'s parent is a spec', () => {
+    const loop = readText('skills/working-the-board/SKILL.md')
+    expect(loop).toMatch(/10\. \*\*Hand back\.\*\*[\s\S]*`Spec:`[\s\S]*close/)
+  })
+
+  it('working-an-epic\'s final report names closing the epic, then the spec', () => {
+    const epic = readText('skills/working-an-epic/SKILL.md')
+    expect(epic).toMatch(/close the epic, then[^.]*spec/i)
+  })
+})
+
+describe('the README documents filing a plan', () => {
+  const readme = readText('README.md')
+
+  it('lists the skill where the others are listed', () => {
+    expect(section(readme, 'Skill')).toMatch(/filing-a-plan/)
+  })
+
+  it("names item_create's status and blockedBy, and board_next's title rule", () => {
+    expect(readme).toMatch(/`item_create`[^\n]*`status`[^\n]*`blockedBy`/)
+    expect(readme).toMatch(/`board_next`[^\n]*`Spec:`[^\n]*`Epic:`/)
+  })
+})

@@ -121,7 +121,10 @@ record's rulings. For that child:
    Otherwise continue.
 4. **Loop**, starting again from `epic_survey`.
 
-When no child is left actionable, stop and report the whole stack with its merge order.
+When no child is left actionable, stop and report the whole stack with its merge order. `item_get`
+the epic; if it has a `parent`, `item_get` that too, and if its title starts `Spec:`, end the report
+with:
+"after the stack merges, close the epic, then the spec" — naming both refs. Armature closes neither.
 
 ## Red flags
 
