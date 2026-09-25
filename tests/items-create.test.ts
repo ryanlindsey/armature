@@ -9,6 +9,7 @@ import {
   UnlinkedItemError,
   UnsequencedItemError,
 } from '../server/providers/github/items.js'
+import { GraphQLError } from '../server/providers/github/client.js'
 import { selectNext } from '../server/providers/github/next.js'
 import type { WorkItemRef } from '../server/ref.js'
 
@@ -94,6 +95,8 @@ function fakeBoard(
     failBlock?: boolean
     /** The blocker writes return, but the read-back shows exactly these blockers. */
     blockLandsAs?: WorkItemRef[]
+    /** A missing parent or blocker is answered as the real client answers it: a NOT_FOUND throw. */
+    notFoundThrows?: boolean
   } = {},
 ) {
   let status: string | null = null
@@ -144,8 +147,14 @@ function fakeBoard(
       if (query.includes('issue(number:$number){ id }')) {
         sent.push('parentNodeId')
         const isEpic = variables.name === epic.repo && Number(variables.number) === epic.number
-        if (isEpic) return { repository: { issue: options.parentMissing ? null : { id: 'I_epic' } } }
-        if (Number(variables.number) === options.missingBlocker) return { repository: { issue: null } }
+        const missing = isEpic ? options.parentMissing : Number(variables.number) === options.missingBlocker
+        if (missing && options.notFoundThrows) {
+          throw new GraphQLError(
+            `Could not resolve to an Issue with the number of ${variables.number}.`, ['NOT_FOUND'],
+          )
+        }
+        if (isEpic) return { repository: { issue: missing ? null : { id: 'I_epic' } } }
+        if (missing) return { repository: { issue: null } }
         const id = `I_${variables.name}_${variables.number}`
         nodeRefs.set(id, { owner: variables.owner!, repo: variables.name!, number: Number(variables.number) })
         return { repository: { issue: { id } } }
@@ -565,4 +574,76 @@ it('UnlinkedItemError names the blockers it never wrote when the link fails firs
   expect((err as Error).message).not.toMatch(/only its epic is unset/)
   expect((err as Error).message).toContain('acme/web#60')
   expect((err as Error).message).toMatch(/second issue/)
+})
+
+// GitHub answers a missing issue with a NOT_FOUND error, which GitHubClient raises before any null
+// reaches the check — so a fake that only returns `issue: null` proves the refusal against nothing.
+describe('a missing parent or blocker is refused as the real client reports it', () => {
+  it('raises MissingBlockerError, not a raw GraphQLError, and creates nothing', async () => {
+    const fake = fakeBoard({ missingBlocker: 60, notFoundThrows: true })
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, blockedBy: [blockerA] }, { read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(MissingBlockerError)
+    expect((err as Error).message).toContain('acme/web#60')
+    expect(fake.sent).not.toContain('createIssue')
+  })
+
+  it('raises MissingParentError, not a raw GraphQLError, and creates nothing', async () => {
+    const fake = fakeBoard({ parentMissing: true, notFoundThrows: true })
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, parent: epic }, { read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(MissingParentError)
+    expect(fake.sent).not.toContain('createIssue')
+  })
+
+  it('lets any other lookup failure through unchanged', async () => {
+    const client = {
+      graphql: vi.fn(async (query: string) => {
+        if (query.includes('issue(number:$number){ id }')) throw new GraphQLError('boom', ['INTERNAL'])
+        return { repository: { id: 'R_1' } }
+      }),
+    } as any
+    const err = await createItem(client, board, snapshot, { ...input, blockedBy: [blockerA] })
+      .catch((e: Error) => e)
+    expect(err).toBeInstanceOf(GraphQLError)
+    expect(err).not.toBeInstanceOf(MissingBlockerError)
+  })
+})
+
+describe('UnsequencedItemError says why each missing blocker is missing', () => {
+  it('names a refused blocker and one that returned but does not read back', async () => {
+    // B's mutation returns, but the read-back shows nothing; A's is refused.
+    const fake = fakeBoard({ blockLandsAs: [] })
+    const original = fake.client.graphql.getMockImplementation()!
+    fake.client.graphql.mockImplementation(async (query: string, variables: Record<string, string>) => {
+      if (query.includes('addBlockedBy') && variables.blocker === 'I_web_60') throw new Error('A refused')
+      return original(query, variables)
+    })
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, blockedBy: [blockerA, blockerB] }, { read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnsequencedItemError)
+    const message = (err as Error).message
+    expect(message).toContain('A refused')
+    expect(message).toMatch(/does not show acme\/api#60/)
+  })
+
+  it('keeps the refusals when the read-back fails too', async () => {
+    const fake = fakeBoard({ failBlock: true })
+    let reads = 0
+    const read = async (ref: WorkItemRef) => {
+      reads += 1
+      // The status read-back succeeds; the blocker read-back does not.
+      if (reads > 1) throw new Error('read failed')
+      return fake.read(ref)
+    }
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, blockedBy: [blockerA] }, { read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnsequencedItemError)
+    expect((err as Error).message).toContain('block failed')
+    expect((err as Error).message).toContain('read failed')
+  })
 })

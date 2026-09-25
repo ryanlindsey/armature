@@ -17420,7 +17420,7 @@ async function getItem(client, board, ref) {
       `${formatRef(ref)} has more than 50 blockers, so its blockers could not be read in full.`
     );
   }
-  const blockedBy = (issue2.blockedBy?.nodes ?? []).map((n) => ({
+  const blockedBy = (issue2.blockedBy?.nodes ?? []).filter(Boolean).map((n) => ({
     owner: n.repository.owner.login,
     repo: n.repository.name,
     number: n.number
@@ -17527,7 +17527,7 @@ var MissingParentError = class extends Error {
 };
 var UnlinkedItemError = class extends Error {
   constructor(ref, parent, cause, unwritten = []) {
-    const also = unwritten.length ? `its epic is unset, and it is not yet marked blocked by ${unwritten.map(formatRef).join(", ")}, which were never attempted. board_next will rank it as a parentless item. Set the parent and add those blockers on the issue itself` : `only its epic is unset, so board_next will rank it as a parentless item. Set the parent on the issue itself`;
+    const also = unwritten.length ? `its epic is unset, and it is not yet marked blocked by ${unwritten.map(formatRef).join(", ")} \u2014 the blocker links come after the parent link and were not attempted. Until the parent is set it reads as a parentless item. Set the parent and add those blockers on the issue itself` : `only its epic is unset, so until it is set it reads as a parentless item. Set the parent on the issue itself`;
     super(
       `Created ${formatRef(ref)}, added it to the board and set its status, but could not link it to ${formatRef(parent)}: ${cause} The item is real and workable; ${also} \u2014 do not call item_create again, which would create a second issue.`
     );
@@ -17554,7 +17554,7 @@ var UnsequencedItemError = class extends Error {
   constructor(ref, parent, missing, confirmed, cause) {
     const list = (refs) => refs.length ? refs.map(formatRef).join(", ") : "none";
     super(
-      `Created ${formatRef(ref)}, added it to the board, set its status` + (parent ? ` and linked it to ${formatRef(parent)}` : "") + `, but could not confirm it is blocked by ${list(missing)}: ${cause} Confirmed blockers: ${list(confirmed)}. The item is real and workable. Add the missing blockers on the issue itself \u2014 do not call item_create again, which would create a second issue.`
+      `Created ${formatRef(ref)}, added it to the board, set its status` + (parent ? ` and linked it to ${formatRef(parent)}` : "") + `, but could not confirm it is blocked by ${list(missing)}: ${cause} Confirmed blockers: ${list(confirmed)}. The item is real and on the board, but not yet sequenced: until the missing blockers are added, nothing marks it as waiting. Add them on the issue itself \u2014 do not call item_create again, which would create a second issue.`
     );
     this.name = "UnsequencedItemError";
   }
@@ -17564,6 +17564,19 @@ var PARENT_ID = `
 query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){ issue(number:$number){ id } }
 }`;
+async function issueNodeId(client, ref) {
+  try {
+    const found = await client.graphql(PARENT_ID, {
+      owner: ref.owner,
+      name: ref.repo,
+      number: ref.number
+    });
+    return found.repository?.issue?.id ?? null;
+  } catch (error2) {
+    if (error2 instanceof GraphQLError && error2.types.includes("NOT_FOUND")) return null;
+    throw error2;
+  }
+}
 var CREATE_ISSUE = `
 mutation($repo:ID!,$title:String!,$body:String!){
   createIssue(input:{repositoryId:$repo,title:$title,body:$body}){ issue{ id number } }
@@ -17617,23 +17630,13 @@ async function createItem(client, board, snapshot, input, options = {}) {
   const repo = await client.graphql(REPO_ID, { owner: input.owner, name: input.repo });
   let link = null;
   if (input.parent) {
-    const found = await client.graphql(PARENT_ID, {
-      owner: input.parent.owner,
-      name: input.parent.repo,
-      number: input.parent.number
-    });
-    const id = found.repository?.issue?.id;
+    const id = await issueNodeId(client, input.parent);
     if (!id) throw new MissingParentError(input.parent, input);
     link = { ref: input.parent, id };
   }
   const blocking = [];
   for (const blocker of blockers) {
-    const found = await client.graphql(PARENT_ID, {
-      owner: blocker.owner,
-      name: blocker.repo,
-      number: blocker.number
-    });
-    const id = found.repository?.issue?.id;
+    const id = await issueNodeId(client, blocker);
     if (!id) throw new MissingBlockerError(blocker, input);
     blocking.push({ ref: blocker, id });
   }
@@ -17685,36 +17688,37 @@ async function createItem(client, board, snapshot, input, options = {}) {
     }
   }
   if (blocking.length === 0) return landed;
-  const refused = [];
+  const refused = /* @__PURE__ */ new Map();
   for (const b of blocking) {
     try {
       await client.graphql(ADD_BLOCKED_BY, { blocked: contentId, blocker: b.id });
     } catch (error2) {
-      refused.push(`${formatRef(b.ref)}: ${error2 instanceof Error ? error2.message : String(error2)}`);
+      refused.set(b.ref, error2 instanceof Error ? error2.message : String(error2));
     }
   }
+  const refusals = [...refused].map(([r, why]) => `${formatRef(r)} was refused: ${why}`);
   let after;
   try {
     after = await read(madeRef);
   } catch (error2) {
+    const why = `reading it back failed: ${error2 instanceof Error ? error2.message : String(error2)}`;
     throw new UnsequencedItemError(
       madeRef,
       link?.ref ?? null,
       blockers,
       [],
-      `reading it back failed: ${error2 instanceof Error ? error2.message : String(error2)}`
+      `${[...refusals, why].join("; ")}.`
     );
   }
   const confirmed = blockers.filter((b) => after.blockedBy.some((a) => sameRef(a, b)));
   const missing = blockers.filter((b) => !confirmed.includes(b));
   if (missing.length === 0) return after;
-  throw new UnsequencedItemError(
-    madeRef,
-    link?.ref ?? null,
-    missing,
-    confirmed,
-    refused.length ? `${refused.join("; ")}.` : "reading it back does not show them."
-  );
+  const unshown = missing.filter((b) => !refused.has(b));
+  const reasons = [
+    ...refusals,
+    ...unshown.length ? [`reading it back does not show ${unshown.map(formatRef).join(", ")}`] : []
+  ];
+  throw new UnsequencedItemError(madeRef, link?.ref ?? null, missing, confirmed, `${reasons.join("; ")}.`);
 }
 
 // server/providers/github/provider.ts

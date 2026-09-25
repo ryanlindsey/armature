@@ -1,7 +1,7 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
 import type { BoardItem, BoardSnapshot, CreateInput } from '../types.js'
-import { GitHubClient } from './client.js'
+import { GitHubClient, GraphQLError } from './client.js'
 
 export type ItemDetail = BoardItem & {
   body: string
@@ -205,7 +205,8 @@ export async function getItem(
       `${formatRef(ref)} has more than 50 blockers, so its blockers could not be read in full.`,
     )
   }
-  const blockedBy: WorkItemRef[] = (issue.blockedBy?.nodes ?? []).map((n: any) => ({
+  // A null node (an issue this credential cannot see) is dropped rather than crashing every read.
+  const blockedBy: WorkItemRef[] = (issue.blockedBy?.nodes ?? []).filter(Boolean).map((n: any) => ({
     owner: n.repository.owner.login,
     repo: n.repository.name,
     number: n.number,
@@ -401,10 +402,11 @@ export class MissingParentError extends Error {
 export class UnlinkedItemError extends Error {
   constructor(ref: WorkItemRef, parent: WorkItemRef, cause: string, unwritten: WorkItemRef[] = []) {
     const also = unwritten.length
-      ? `its epic is unset, and it is not yet marked blocked by ${unwritten.map(formatRef).join(', ')}, ` +
-        `which were never attempted. board_next will rank it as a parentless item. Set the parent ` +
-        `and add those blockers on the issue itself`
-      : `only its epic is unset, so board_next will rank it as a parentless item. Set the parent ` +
+      ? `its epic is unset, and it is not yet marked blocked by ${unwritten.map(formatRef).join(', ')} ` +
+        `— the blocker links come after the parent link and were not attempted. Until the parent ` +
+        `is set it reads as a parentless item. Set the parent and add those blockers on the issue ` +
+        `itself`
+      : `only its epic is unset, so until it is set it reads as a parentless item. Set the parent ` +
         `on the issue itself`
     super(
       `Created ${formatRef(ref)}, added it to the board and set its status, but could not link ` +
@@ -454,9 +456,9 @@ export class UnsequencedItemError extends Error {
       `Created ${formatRef(ref)}, added it to the board, set its status` +
         (parent ? ` and linked it to ${formatRef(parent)}` : '') +
         `, but could not confirm it is blocked by ${list(missing)}: ${cause} ` +
-        `Confirmed blockers: ${list(confirmed)}. The item is real and workable. Add the missing ` +
-        `blockers on the issue itself — do not call item_create again, which would create a ` +
-        `second issue.`,
+        `Confirmed blockers: ${list(confirmed)}. The item is real and on the board, but not yet ` +
+        `sequenced: until the missing blockers are added, nothing marks it as waiting. Add them ` +
+        `on the issue itself — do not call item_create again, which would create a second issue.`,
     )
     this.name = 'UnsequencedItemError'
   }
@@ -474,6 +476,29 @@ export const PARENT_ID = `
 query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){ issue(number:$number){ id } }
 }`
+
+/**
+ * An issue's node id, or null when it does not exist or is not visible.
+ *
+ * GitHub answers a missing repository or issue with a NOT_FOUND error, which GitHubClient raises
+ * before any null reaches the caller — so checking the data for null alone left MissingParentError
+ * and MissingBlockerError unreachable against the real API, surfacing a raw GraphQLError that names
+ * neither the reference nor the fix. Translated here, as epic.ts does for EpicNotFoundError. Any
+ * other failure passes through unchanged.
+ */
+async function issueNodeId(client: GitHubClient, ref: WorkItemRef): Promise<string | null> {
+  try {
+    const found = await client.graphql<any>(PARENT_ID, {
+      owner: ref.owner,
+      name: ref.repo,
+      number: ref.number,
+    })
+    return (found.repository?.issue?.id as string | undefined) ?? null
+  } catch (error) {
+    if (error instanceof GraphQLError && error.types.includes('NOT_FOUND')) return null
+    throw error
+  }
+}
 
 const CREATE_ISSUE = `
 mutation($repo:ID!,$title:String!,$body:String!){
@@ -596,12 +621,7 @@ export async function createItem(
   // so the link step below cannot be reached holding one without the other.
   let link: { ref: WorkItemRef; id: string } | null = null
   if (input.parent) {
-    const found = await client.graphql<any>(PARENT_ID, {
-      owner: input.parent.owner,
-      name: input.parent.repo,
-      number: input.parent.number,
-    })
-    const id = found.repository?.issue?.id as string | undefined
+    const id = await issueNodeId(client, input.parent)
     if (!id) throw new MissingParentError(input.parent, input)
     link = { ref: input.parent, id }
   }
@@ -609,12 +629,7 @@ export async function createItem(
   // Resolved before anything is created, for the reason the parent is. See MissingBlockerError.
   const blocking: { ref: WorkItemRef; id: string }[] = []
   for (const blocker of blockers) {
-    const found = await client.graphql<any>(PARENT_ID, {
-      owner: blocker.owner,
-      name: blocker.repo,
-      number: blocker.number,
-    })
-    const id = found.repository?.issue?.id as string | undefined
+    const id = await issueNodeId(client, blocker)
     if (!id) throw new MissingBlockerError(blocker, input)
     blocking.push({ ref: blocker, id })
   }
@@ -696,29 +711,33 @@ export async function createItem(
   // Fifth and last: a missing blocker link is the mildest half-landing — selectNext does not read
   // blockedBy, and working-the-board still reads the prose "Depends on" line. Every mutation is
   // attempted, then one read-back judges the whole set, so the error can say exactly which landed.
-  const refused: string[] = []
+  const refused = new Map<WorkItemRef, string>()
   for (const b of blocking) {
     try {
       await client.graphql(ADD_BLOCKED_BY, { blocked: contentId, blocker: b.id })
     } catch (error) {
-      refused.push(`${formatRef(b.ref)}: ${error instanceof Error ? error.message : String(error)}`)
+      refused.set(b.ref, error instanceof Error ? error.message : String(error))
     }
   }
+  const refusals = [...refused].map(([r, why]) => `${formatRef(r)} was refused: ${why}`)
 
   let after: ItemDetail
   try {
     after = await read(madeRef)
   } catch (error) {
+    const why = `reading it back failed: ${error instanceof Error ? error.message : String(error)}`
     throw new UnsequencedItemError(
-      madeRef, link?.ref ?? null, blockers, [],
-      `reading it back failed: ${error instanceof Error ? error.message : String(error)}`,
+      madeRef, link?.ref ?? null, blockers, [], `${[...refusals, why].join('; ')}.`,
     )
   }
   const confirmed = blockers.filter((b) => after.blockedBy.some((a) => sameRef(a, b)))
   const missing = blockers.filter((b) => !confirmed.includes(b))
   if (missing.length === 0) return after
-  throw new UnsequencedItemError(
-    madeRef, link?.ref ?? null, missing, confirmed,
-    refused.length ? `${refused.join('; ')}.` : 'reading it back does not show them.',
-  )
+  // Every missing blocker gets its own reason: refused outright, or accepted and then not shown.
+  const unshown = missing.filter((b) => !refused.has(b))
+  const reasons = [
+    ...refusals,
+    ...(unshown.length ? [`reading it back does not show ${unshown.map(formatRef).join(', ')}`] : []),
+  ]
+  throw new UnsequencedItemError(madeRef, link?.ref ?? null, missing, confirmed, `${reasons.join('; ')}.`)
 }
