@@ -63,4 +63,53 @@ describe('codeMask', () => {
     const lines = ['prose', '```', 'code', '```', '    indented', 'more']
     expect(codeMask(lines.join('\r\n'))).toEqual(codeMask(lines.join('\n')))
   })
+  it('does not close a fence on a closer indented four or more spaces', () => {
+    // CommonMark: a closer may be indented 0-3 spaces. `    ```` inside a fence is content.
+    expect(codeMask('```\n    ```\n- [ ] x\n```\n')).toEqual([true, true, true, true, false])
+  })
+
+  it('closes a fence on a closer indented up to three spaces, with trailing whitespace', () => {
+    expect(codeMask(['```', 'code', '   ```  \t', 'prose'].join('\n'))).toEqual([
+      true, true, true, false,
+    ])
+  })
+
+  it('closes a fence on a longer closer of the same character', () => {
+    expect(codeMask(['```', 'code', '`````', 'prose'].join('\n'))).toEqual([true, true, true, false])
+  })
+
+  it('does not close a fence on a closer followed by non-ASCII whitespace', () => {
+    expect(codeMask(['```', '``` ', 'code', '```', 'prose'].join('\n'))).toEqual([
+      true, true, true, true, false,
+    ])
+  })
+
+  it('does not close a fence on a closer trailed by the other fence character', () => {
+    expect(codeMask(['```', '```~~', 'code', '```', 'prose'].join('\n'))).toEqual([
+      true, true, true, true, false,
+    ])
+  })
+
+  it('does not close a fence on a tab-indented closer', () => {
+    expect(codeMask(['```', '\t```', 'code', '```', 'prose'].join('\n'))).toEqual([
+      true, true, true, true, false,
+    ])
+  })
+
+  it('marks indentation that reaches column four through spaces and a tab, as a tab stop', () => {
+    expect(codeMask(['prose', ' \t- [ ] z', '  \tz', '   \tz', 'more'].join('\n'))).toEqual([
+      false, true, true, true, false,
+    ])
+  })
+
+  it('treats a fence reaching column four through a tab as indented code, not an opener', () => {
+    expect(codeMask([' \t```', '- [ ] x'].join('\n'))).toEqual([true, false])
+    expect(codeMask(['\t```', '- [ ] x'].join('\n'))).toEqual([true, false])
+  })
+
+  it('does not count non-ASCII whitespace as indentation', () => {
+    expect(codeMask(['    text', '　```', 'more'].join('\n'))).toEqual([
+      false, false, false,
+    ])
+  })
 })

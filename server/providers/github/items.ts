@@ -46,7 +46,7 @@ const DECLARATION =
   /^(?:[-*+]\s+)?(?:\*\*)?(epic|part of):(?:\*\*)?\s*([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#(\d+)(?:\*\*)?$/i
 
 // CommonMark's code-block syntaxes are a closed, enumerable set: triple-backtick fences,
-// tilde (~~~) fences, and indented code blocks (4+ leading spaces, or a leading tab). Round 2
+// tilde (~~~) fences, and indented code blocks (4+ columns of spaces and tabs, tab stops of 4). Round 2
 // stripped only the first; the re-reviewer reproduced the same silent wrong-epic attachment
 // through the other two ("a fenced line carries no backticks of its own" applies just as
 // much to a tilde fence, and .trim()-ing a line before checking indentation erases the very
@@ -68,7 +68,7 @@ const DECLARATION =
 // line indented 4+ spaces inside a list item is ordinarily list-item content, not code,
 // relative to the list marker's own indentation — and correctly telling those apart requires
 // tracking container structure (list items, blockquotes) across lines, which this does not
-// do. Any line starting with 4+ spaces or a tab is treated as code unconditionally,
+// do. Any line indented 4+ columns is treated as code unconditionally,
 // regardless of surrounding structure. Given the stated asymmetry (a false negative is free;
 // a false positive is a silent wrong epic), stripping a superset of true indented code blocks
 // is the safe direction, but it is an approximation, not a claim of full compliance.
@@ -92,12 +92,9 @@ function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
 // configuration plumbing to gate it behind — that arrives with config-io.ts in Task 12.
 // Shipping it always-on was tried and rejected: three rounds of review each narrowed a
 // different hole in what turned out to be an unbounded "distinguish decorative content from
-// prose" problem, and a fourth review found two more still open, which whoever wires this up
-// behind the config gate must close first:
-//   - indentation that only reaches 4+ columns after CommonMark's tab-stop expansion (e.g. a
-//     line starting with two spaces then a tab) is not recognised as indented code — the
-//     current check is the literal `/^( {4,}|\t)/` in checklist.ts's codeMask, not a tab-stop-aware
-//     column count.
+// prose" problem, and a fourth review found two more still open. One is now closed — codeMask
+// counts indentation in CommonMark columns, so a space then a tab reaches column 4 as indented
+// code. The other remains, and whoever wires this up behind the config gate must close it first:
 //   - HTML blocks (e.g. `<pre>Epic: acme/web#1</pre>`) are not stripped at all; only the three
 //     Markdown code-block syntaxes (fenced by backticks, fenced by tildes, indented) are.
 // Until that gate exists, do not call this from getItem or any other live read path.

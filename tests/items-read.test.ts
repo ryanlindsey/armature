@@ -124,6 +124,12 @@ describe('parseEpicFromBody', () => {
     expect(parseEpicFromBody(body)).toBeNull()
   })
 
+  it('does not parse a declaration indented to column four by a space then a tab', () => {
+    // CommonMark tab stops: ' \t' reaches column 4, so this is indented code.
+    const body = ['Convention example:', '', ' \tEpic: acme/web#1'].join('\n')
+    expect(parseEpicFromBody(body)).toBeNull()
+  })
+
   it('strips an unterminated triple-backtick fence to the end of the body', () => {
     // A false negative here costs nothing (the parent link is unaffected and the fallback
     // simply declines); an unclosed fence whose remainder is treated as prose risks a silent
