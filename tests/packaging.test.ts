@@ -237,10 +237,45 @@ describe('the commands declare the tools they actually use', () => {
     expect(fm).toMatch(/\bTask\b/)
   })
 
+  // using-git-worktrees prefers the harness's native tool over `git worktree add`. Left off this
+  // list, the isolate step stops on a permission prompt — the same stall #65 removes from the skill.
+  it('/armature-next pre-approves the native worktree tool its isolate step prefers', () => {
+    const fm = frontmatter(readText('commands/armature-next.md'))
+    expect(fm).toMatch(/\bEnterWorktree\b/)
+  })
+
   it('names the MCP server the plugin actually declares', () => {
     const plugin = read('.claude-plugin/plugin.json')
     expect(Object.keys(plugin.mcpServers)).toEqual(['armature'])
     expect(plugin.name).toBe('armature')
+  })
+})
+
+// /armature-next's arguments carry a ref, an instruction such as "no worktree", or both (#65).
+// Only the ref may reach item_get: the rest would be refused as a malformed reference, and a
+// bare number in it must still never be read as one.
+describe('/armature-next separates the ref from the human\'s instructions', () => {
+  const command = readText('commands/armature-next.md')
+  const body = command.replace(/^---\n[\s\S]*?\n---/, '')
+
+  it('advertises instructions in its argument hint', () => {
+    expect(frontmatter(command)).toMatch(/argument-hint:.*no worktree/i)
+  })
+
+  it('passes only the ref to item_get and the rest to the skill', () => {
+    expect(body).toMatch(/item_get[^.]*nothing else/i)
+    expect(body).toMatch(/rest[\s\S]{0,40}instructions/i)
+  })
+
+  // Splitting the arguments opened a hole: "ref or board_next" read literally sends `#12` to
+  // board_next, which claims an item the human never named. Naming an item badly must stop.
+  it('stops, rather than falling back to board_next, when an item is named without a ref', () => {
+    expect(body).toMatch(/bare number[\s\S]{0,200}STOP/)
+    expect(body).toMatch(/never\s+fall\s+back\s+to\s+`board_next`/i)
+  })
+
+  it('is documented in the README', () => {
+    expect(section(readText('README.md'), 'Commands')).toMatch(/no worktree/i)
   })
 })
 
@@ -316,6 +351,48 @@ describe('the skill composes with Superpowers rather than reimplementing it', ()
     const loop = section(skill, 'The loop')
     expect(loop, 'the loop must name the option').toMatch(/pull request/i)
     expect(loop, 'the loop must not pre-select by ordinal').not.toMatch(/option \d/i)
+  })
+
+  // using-git-worktrees asks before creating a worktree unless a preference is on record, and a
+  // missed prompt stalls the whole run (#65). Invoking armature is that preference; the human can
+  // still decline it for one run by saying so.
+  it('answers the worktree consent question in advance', () => {
+    const loop = section(skill, 'The loop')
+    expect(loop, 'the loop must no longer leave the question open').not.toMatch(/let it be asked/i)
+    expect(loop).toMatch(/without asking/i)
+
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/does not get to ask for consent/i)
+  })
+
+  it('lets the human decline the worktree for one run', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/no\s+worktree/i)
+    expect(rules, 'branches in place by the step-5 fallback row').toMatch(/Without Superpowers\*?\s+row\s+for\s+step\s+5/i)
+    expect(rules, 'the override does not stick').toMatch(/this\s+run\s+only/i)
+  })
+
+  // The session stays in a run's worktree afterwards, so a second run in the same session lands in
+  // Step 0's "already in a linked worktree" branch. Reusing it blindly puts item B's commits on item
+  // A's branch — and into A's open PR.
+  it('reuses an existing worktree only when it carries no other item\'s work', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/already in a linked worktree[\s\S]{0,300}no commits/i)
+    expect(rules).toMatch(/ExitWorktree/)
+  })
+
+  // With Superpowers declined and without Superpowers at all, the work lands the same way: the two
+  // in-place paths must not drift apart.
+  it('branches in place the same way with or without Superpowers', () => {
+    const row = /^\| 5\. Isolate \|.*$/m.exec(section(skill, 'Without Superpowers'))?.[0] ?? ''
+    expect(row).toContain('issue-<number>-<slug>')
+    expect(row).toMatch(/uncommitted/i)
+    expect(row).toMatch(/origin/)
+  })
+
+  // Answering consent in advance must not swallow the one question that is really the human's.
+  it('leaves a failing baseline to the human', () => {
+    expect(section(skill, 'Rules')).toMatch(/baseline/i)
   })
 
   // The loop declares which steps it delegates. Every one of them must have a fallback row, keyed

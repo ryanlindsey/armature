@@ -21,8 +21,9 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    not this one.
 3. **Check its prerequisites.** See the prerequisite rule below. Do this before claiming, not after.
 4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
-5. **Isolate.** Use `superpowers:using-git-worktrees`. It asks before creating a worktree unless a
-   preference is already on record; that question is the human's to answer, so let it be asked.
+5. **Isolate.** Use `superpowers:using-git-worktrees`, and create the worktree without asking —
+   invoking armature is the consent. If the human said not to use a worktree, work in place
+   instead; see the rule below.
 6. **Implement.** Use `superpowers:test-driven-development` — the failing test first, watched
    failing, then the implementation.
 7. **Review.** Use `superpowers:requesting-code-review`. Fix Critical and Important findings before
@@ -41,7 +42,7 @@ Most installs will not have it. Every step above still happens; only what carrie
 
 | Step | Instead |
 | --- | --- |
-| 5. Isolate | Branch as `issue-<number>-<slug>`. |
+| 5. Isolate | If `git status --porcelain` shows anything — uncommitted or untracked changes — say so and STOP rather than branching over them. Otherwise `git fetch`, then branch as `issue-<number>-<slug>` from `origin/<default-branch>`. |
 | 6. Implement | Write the failing test first, watch it fail, then write the implementation. |
 | 7. Review | Re-read the whole diff against the item's acceptance criteria before opening the PR. |
 | 9. Open a PR | `git push -u origin <branch>`, then `gh pr create`. |
@@ -62,6 +63,17 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   If any of them is not in the board's done status, say which item is waiting on which, and STOP
   without claiming. The server does not check prerequisites — it reports facts and effects, and
   "this should wait" is a judgment — so this rule is the only place that check exists.
+- **`using-git-worktrees` does not get to ask for consent.** It asks before creating a worktree
+  unless a preference is on record, and a missed prompt stalls the whole run. Invoking armature is
+  that preference: treat consent as given and do not ask. Name the worktree `issue-<number>-<slug>`.
+  If it reports you are already in a linked worktree, reuse it only when its branch has no commits
+  of its own beyond the default branch; otherwise it holds another item's work — say which, and
+  STOP, or leave it with `ExitWorktree` (keeping it) before creating this item's worktree. The
+  exception is the human saying otherwise, for this run or in their standing instructions — "no
+  worktree", "don't use a worktree", "work in place", in any wording. Then answer *no* and branch
+  in place, exactly as the *Without Superpowers* row for step 5 does. An override given with the
+  invocation lasts for this run only. Its other question stays the human's: if the baseline tests
+  fail, report them and let the human decide whether to go on.
 - **`finishing-a-development-branch` does not get to ask its menu.** Take the option whose text is
   **push and create a Pull Request**, and skip the question. Name it by its text, never its number:
   that skill shows a different menu on a detached HEAD — the state `using-git-worktrees` reports for

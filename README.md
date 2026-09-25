@@ -122,7 +122,9 @@ refused, and armature never emits one.
 ## Commands
 
 - **`/armature-next [owner/repo#number or issue URL]`** — work the next actionable item on the
-  board, on a branch, ending in a PR. Given a reference, works that item instead.
+  board, on a branch, ending in a PR. Given a reference, works that item instead. With Superpowers
+  it isolates the work in a git worktree without asking; add `no worktree` to the arguments to
+  branch in the current checkout for that run.
 - **`/armature-doctor`** — reports what armature derived about your board (its identity,
   repositories, inferred status meanings, any colliding issue numbers) so you can check it
   before trusting it.
