@@ -4,7 +4,7 @@ import { describeBoardProvider } from './provider.contract.js'
 
 // Titles carry the repository, so an item fetched for the wrong repository is detectable — see
 // the contract's precondition, which requires colliding items to be distinguishable.
-function issue(repo: string, number: number) {
+function issue(repo: string, number: number, parent: { repo: string; number: number } | null = null) {
   return {
     id: `PVTI-${repo}-${number}`,
     fieldValueByName: { name: 'Todo' },
@@ -13,13 +13,23 @@ function issue(repo: string, number: number) {
       title: `${repo} item ${number}`,
       state: 'OPEN',
       repository: { owner: { login: 'acme' }, name: repo },
-      parent: null,
+      parent: parent && {
+        number: parent.number,
+        repository: { owner: { login: 'acme' }, name: parent.repo },
+      },
     },
   }
 }
 
-// Two repositories both numbering an issue 278 — the collision the incident was made of.
-const nodes = [issue('web', 278), issue('api', 278), issue('web', 12)]
+// Two repositories both numbering an issue 278 — the collision the incident was made of. Both are
+// children of one epic, so the epic block also sees a same-numbered pair it must keep distinct.
+const EPIC = { owner: 'acme', repo: 'web', number: 1 }
+const nodes = [
+  issue('web', 1),
+  issue('web', 278, EPIC),
+  issue('api', 278, EPIC),
+  issue('web', 12),
+]
 
 // Rooted at repositoryOwner, matching BOARD_QUERY: it resolves a user account and an
 // organization alike, where `organization(login:)` fails outright on the former.
@@ -47,6 +57,35 @@ const boardResponse = {
 const client = {
   graphql: async (query: string, variables: Record<string, unknown>) => {
     if (!query.includes('issue(number:$number)')) return boardResponse
+
+    // EPIC_ENRICHMENT: the epic's sub-issues, read from the same nodes the board holds.
+    if (query.includes('subIssues')) {
+      const epic = nodes.find(
+        (n) => n.content.repository.name === variables.name && n.content.number === variables.number,
+      )
+      if (!epic) return { repository: { issue: null } }
+      const children = nodes.filter(
+        (n) =>
+          n.content.parent?.repository.name === variables.name &&
+          n.content.parent?.number === variables.number,
+      )
+      return {
+        repository: {
+          issue: {
+            title: epic.content.title,
+            subIssues: {
+              nodes: children.map((n) => ({
+                number: n.content.number,
+                repository: n.content.repository,
+                labels: { nodes: [] },
+                blockedBy: { nodes: [] },
+                closedByPullRequestsReferences: { nodes: [] },
+              })),
+            },
+          },
+        },
+      }
+    }
 
     const node = nodes.find(
       (n) => n.content.repository.name === variables.name && n.content.number === variables.number,
@@ -80,4 +119,5 @@ const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 describeBoardProvider(
   'GitHubBoardProvider',
   async () => new GitHubBoardProvider(client, board, { boardSource: 'repo' }),
+  { epic: EPIC },
 )

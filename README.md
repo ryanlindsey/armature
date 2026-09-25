@@ -105,7 +105,7 @@ it's about to do.
 
 ## Tools
 
-The MCP server exposes six tools:
+The MCP server exposes seven tools:
 
 | tool | does |
 | --- | --- |
@@ -115,6 +115,7 @@ The MCP server exposes six tools:
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
 | `item_create` | Create an issue, add it to the board, set it to the board's todo status, and optionally file it under a `parent` epic, so `board_next` can return it — correctly ranked — without a second call. Each step is verified, and a failure says exactly which steps landed. |
+| `epic_survey` | An epic and its children in working order: each child's status, labels, blockers, and linked pull requests with their branches, plus which child is next and why — the same answer `board_next` gives. A sub-issue that is not on the board is reported separately, never dropped. |
 
 Every reference in and out is `owner/repo#number`, or a `github.com` issue URL. A bare number is
 refused, and armature never emits one.

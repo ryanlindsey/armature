@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatch, InvalidArgumentError, makeRefResolver, TOOLS } from '../server/index.js'
+import { dispatch, EpicUnsupportedError, InvalidArgumentError, makeRefResolver, TOOLS } from '../server/index.js'
 import { AliasConflictError } from '../server/providers/github/aliases.js'
 import type { SiblingConfigReader } from '../server/providers/github/aliases.js'
-import type { BoardProvider, BoardSnapshot } from '../server/providers/types.js'
+import type { BoardProvider, BoardSnapshot, EpicSurvey } from '../server/providers/types.js'
 import { BareRefError, parseRef } from '../server/ref.js'
 
 const snapshot: BoardSnapshot = {
@@ -645,5 +645,64 @@ describe('the declared tool surface', () => {
   it('says on item_create where the new item lands', () => {
     const create = TOOLS.find((t) => t.name === 'item_create')!
     expect(create.description).toMatch(/todo status/i)
+  })
+})
+
+describe('epic_survey', () => {
+  const survey: EpicSurvey = {
+    epic: { ref: { owner: 'acme', repo: 'web', number: 10 }, title: 'Epic: ship it' },
+    children: [],
+    offBoard: [],
+    next: { ref: null, because: 'Nothing is actionable.' },
+  }
+  const withEpic = () => makeProvider({ epic: vi.fn().mockResolvedValue(survey) })
+
+  it('is advertised with exactly the argument the handler accepts', () => {
+    const tool = TOOLS.find((t) => t.name === 'epic_survey')
+    expect(tool).toBeDefined()
+    expect(Object.keys(tool!.inputSchema.properties)).toEqual(['ref'])
+    expect(tool!.inputSchema.required).toEqual(['ref'])
+  })
+
+  it('refuses a bare issue number', async () => {
+    await expect(dispatch(withEpic(), 'epic_survey', { ref: 10 }, { dryRun: false })).rejects.toThrow(
+      BareRefError,
+    )
+  })
+
+  it('refuses a missing ref', async () => {
+    await expect(dispatch(withEpic(), 'epic_survey', {}, { dryRun: false })).rejects.toThrow(
+      InvalidArgumentError,
+    )
+  })
+
+  it("returns the provider's survey unchanged, for the ref it was asked about", async () => {
+    const provider = withEpic()
+    const result = await dispatch(provider, 'epic_survey', { ref: 'acme/web#10' }, { dryRun: false })
+    expect(provider.epic).toHaveBeenCalledWith({ owner: 'acme', repo: 'web', number: 10 })
+    expect(textOf(result)).toEqual(survey)
+  })
+
+  it('reports by name when the provider has no epic support', async () => {
+    const error = await dispatch(makeProvider(), 'epic_survey', { ref: 'acme/web#10' }, { dryRun: false })
+      .catch((e: Error) => e)
+    expect(error).toBeInstanceOf(EpicUnsupportedError)
+    expect((error as Error).message).toMatch(/one at a time/)
+  })
+
+  // A malformed call is reported as malformed, not as unsupported.
+  it('validates the argument before checking the capability', async () => {
+    await expect(dispatch(makeProvider(), 'epic_survey', { ref: 10 }, { dryRun: false })).rejects.toThrow(
+      BareRefError,
+    )
+  })
+
+  it('writes no mutation log, because it writes nothing', async () => {
+    const lines: string[] = []
+    await dispatch(withEpic(), 'epic_survey', { ref: 'acme/web#10' }, {
+      dryRun: false,
+      logWrite: (l) => lines.push(l),
+    })
+    expect(lines).toEqual([])
   })
 })
