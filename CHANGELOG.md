@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0](https://github.com/ryanlindsey/armature/compare/armature-v0.6.0...armature-v0.7.0) (2026-09-25)
+
+
+### Features
+
+* **board_next:** never select a Spec: or Epic: titled item ([#83](https://github.com/ryanlindsey/armature/issues/83)) ([7a4e45d](https://github.com/ryanlindsey/armature/commit/7a4e45d4a2a237f9a2288e8860b0a126d9f7e397))
+* **item_create:** file an item in any status, blocked by other items ([#81](https://github.com/ryanlindsey/armature/issues/81)) ([b26aa01](https://github.com/ryanlindsey/armature/commit/b26aa017dd44420a8717c4ce9278197d2fd46c44))
+* **skill:** add filing-a-plan, and remind the human to close the spec ([#84](https://github.com/ryanlindsey/armature/issues/84)) ([f582adb](https://github.com/ryanlindsey/armature/commit/f582adb4eae62bcd31e7837192759b0066b26efd))
+
 ## [0.6.0](https://github.com/ryanlindsey/armature/compare/armature-v0.5.1...armature-v0.6.0) (2026-09-25)
 
 
