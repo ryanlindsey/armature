@@ -316,14 +316,40 @@ describe('the epic skill carries the policies the server cannot enforce', () => 
     expect(skill).toMatch(/re-?dispatch/i)
   })
 
-  it('names the base branch rule', () => {
-    expect(skill).toMatch(/base branch/i)
+  it('names the base branch rule, explicitly, in the brief', () => {
     expect(skill).toMatch(/blockedBy|blocker/)
+    expect(section(skill, 'The loop')).toMatch(/base branch, explicitly/i)
   })
 
-  it('asks the worktree question once per epic, not once per child', () => {
-    expect(skill).toMatch(/worktree/i)
-    expect(skill).toMatch(/once/i)
+  // Since ryanlindsey/armature#66, invoking armature is the worktree consent; the epic settles
+  // that answer once in setup rather than letting each child ask.
+  it('settles the worktree answer once per epic, not once per child', () => {
+    expect(section(skill, 'Before the first dispatch')).toMatch(/worktree answer once/i)
+  })
+
+  // A child that needs a person stays in the todo status, so epic_survey's `next` names it again
+  // every iteration. Without a record of the ruling the controller re-dispatches it forever and
+  // never reaches the terminal condition.
+  it('keeps a run record of the rulings the board cannot hold', () => {
+    const record = section(skill, 'The run record')
+    expect(record).toMatch(/need(s|ing)? a person/i)
+    expect(record).toMatch(/files touched/i)
+    expect(section(skill, 'The loop')).toMatch(/not .*`next`|rather than .*`next`/i)
+  })
+
+  // working-the-board's step 1 runs board_next, which would pick a different item, and its step 4
+  // claims, which raises StaleItemError for a child this run already claimed.
+  it('starts the child at step 2 and does not re-claim a re-dispatched child', () => {
+    const loop = section(skill, 'The loop')
+    expect(loop).toMatch(/step 2/i)
+    expect(loop).toMatch(/board_next/)
+    expect(loop).toMatch(/item_claim/)
+  })
+
+  // working-the-board carries on to a PR over a red verify; the controller cannot stop a run on a
+  // flag the child never reports, or unopen a PR the child already opened.
+  it('has the child stop before the PR when verify is red, and report it', () => {
+    expect(section(skill, 'The loop')).toMatch(/verify is red[\s\S]*?before opening/i)
   })
 
   // working-the-board's own prerequisite rule stops on any blocker not in the done status, and a

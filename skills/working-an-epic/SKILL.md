@@ -29,13 +29,33 @@ iterations in your head — re-derive it. Compaction cannot lose what you never 
 | Child's state | Means | Do |
 | --- | --- | --- |
 | Closed, PR merged | finished | skip |
-| Open, claimed status, open PR | worked and handed back; it is in the stack | skip — it is a base candidate |
-| Open, claimed status, **no PR** | **interrupted mid-flight** | **re-dispatch it** |
-| Open, todo status | not started | dispatch when its turn comes |
+| Open, claimed or review status, open PR | worked and handed back; it is in the stack | skip — it is a base candidate |
+| Open, claimed status, **no PR** | **interrupted mid-flight** — unless the run record says otherwise | **re-dispatch it** |
+| Open, review status, no PR | handed back with nothing to review | report it; do not re-dispatch |
+| Open, todo status | not started — unless the run record holds a ruling on it | dispatch when its turn comes |
 
 The third row is the one nothing else distinguishes. A child whose subagent died leaves the board
 reading "In Progress" with nothing to show, which is indistinguishable from work in flight until
-you look for the PR. Look for the PR.
+you look for the PR. Look for the PR — in `pullRequests`, and then in the run record.
+
+## The run record
+
+The board holds status and pull requests. It cannot hold a ruling. So keep one short record for
+this run, and nothing else, of what only you know:
+
+- **Children ruled as needing a person**, and children stopped by a prerequisite outside this
+  epic or not yet worked. They stay in the todo status, so `epic_survey` reports them as todo —
+  and its `next` names the same one again every iteration. Without this record you re-dispatch it
+  forever and never reach the terminal condition.
+- **Each child's PR url and head branch**, as the child reported them. A PR that targets another
+  child's branch rather than the default branch may not appear in that child's `pullRequests` at
+  all — GitHub links a closing keyword only on the default branch — so this is how you find a base
+  and tell a stacked child from an interrupted one.
+- **The files touched by each child**, as reported, for the collision check.
+
+The record is rulings, not position. Position still comes from `epic_survey`: where the two
+disagree about status, the board wins; where the board is silent — a ruling, or a PR it cannot see
+— the record fills in.
 
 ## Before the first dispatch
 
@@ -46,36 +66,54 @@ you look for the PR. Look for the PR.
    consent to a worktree, unless the human said otherwise — "no worktree", "work in place", in any
    wording. Settle that **once**, for the whole epic, from what the human said when invoking this
    skill, and pass the same answer down in every brief. Do not ask it again per child: in a loop
-   that is one identical prompt per child, and a missed one stalls the run.
+   that is one identical prompt per child, and a missed one stalls the run. Dispatch from the main
+   checkout, not from inside a linked worktree: `working-the-board` refuses to reuse a worktree
+   whose branch has commits of its own, and under stacking every child's would.
 3. **Announce the run.** Name the children you will work, in order, and any you will not — a child
-   carrying the `humanLabel` declared in `.armature.json`, if one is declared, needs a person, and
-   a child blocked by one cannot proceed. Saying so now beats discovering it at child four.
+   carrying the `humanLabel` declared in its own repository's `.armature.json`, if one is declared,
+   needs a person, and a child blocked by one cannot proceed. Saying so now beats discovering it at
+   child four.
 
 ## The loop
 
-For each child, in the order `epic_survey` reports:
+Walk `epic_survey`'s `children` in the order it reports them, and dispatch the first one the ledger
+and the run record leave actionable — rather than simply taking `next`, which cannot see the run
+record's rulings. For that child:
 
-1. **Choose the base branch.** If the child has `blockedBy`, the base is that blocker's open PR
-   `headRefName`. If it has none, the base is the repository's default branch.
+1. **Choose the base branch.**
+   - No `blockedBy`, or every blocker closed with its PR merged: the repository's default branch.
+   - One open blocker in this epic with a PR: that PR's `headRefName`, from `pullRequests` or from
+     the run record.
+   - An open blocker with no PR, or one ruled as needing a person: this child cannot proceed yet —
+     record it and skip it.
+   - More than one open blocker, or a blocker in another repository: a branch has one base, and
+     another repository's branch cannot be it. Record the child as blocked and skip it.
 2. **Dispatch one subagent**, with a brief that names:
-   - the child's fully qualified ref,
-   - **the base branch, explicitly** — branch from it and open the PR against it (see the rule
-     below),
-   - the worktree answer from the setup step,
-   - the instruction to use `armature:working-the-board` for that one item,
+   - the child's fully qualified ref, and that it **starts at step 2 of `working-the-board` with
+     that ref** — it does not run `board_next`, which would choose some other item;
+   - **the base branch, explicitly** — branch from it, answer `finishing-a-development-branch`'s
+     "which branch did this split from" with it rather than the default branch, and open the PR
+     against it (see the rule below);
+   - on a re-dispatch of an interrupted child, that this run already claimed it — skip
+     `item_claim`, which would refuse an item no longer in todo — and that an existing
+     `issue-<number>-*` branch or worktree for it is its own to inspect and continue;
+   - the worktree answer from the setup step;
+   - the instruction to use `armature:working-the-board` for that one item;
    - **the prerequisite ruling:** inside this run a prerequisite is satisfied when its work is
-     reachable from the base branch (`git merge-base --is-ancestor`), even though the board does
-     not yet show it done — so step 3 of `working-the-board` passes a stacked blocker rather than
-     stopping on it,
+     reachable from the base branch — name the blocker's ref and head branch, and the child checks
+     `git merge-base --is-ancestor` against it — even though the board does not yet show it done,
+     so step 3 of `working-the-board` passes a stacked blocker rather than stopping on it;
    - that if the issue needs a person, it reports so **without claiming and without
-     implementing**,
-   - the reporting contract: PR url, head branch, **files touched**, criteria settled, and any red
-     flag it hit.
-3. **Adjudicate.** If the report carries a red flag, stop and ask. Otherwise record it and continue.
+     implementing**;
+   - that if verify is red, it stops before opening the PR and reports that instead;
+   - the reporting contract: PR url, head branch, **files touched**, criteria settled, the verify
+     outcome, how many review rounds it took with any finding still open, and whether it stopped
+     without claiming and why.
+3. **Adjudicate.** Record the report in the run record. If it carries a red flag, stop and ask.
+   Otherwise continue.
 4. **Loop**, starting again from `epic_survey`.
 
-When `epic_survey` reports no actionable child, stop and report the whole stack with its merge
-order.
+When no child is left actionable, stop and report the whole stack with its merge order.
 
 ## Red flags
 
@@ -107,14 +145,16 @@ merge order, and what needs a person.
   done.** Stacking means the blocker's PR is never merged while you work — judging by board status
   would stop the run at the second child, every time. The child checks reachability
   (`git merge-base --is-ancestor`), not status, and the brief is where it learns to. A prerequisite
-  outside this epic, or one not yet worked, still stops the run.
+  outside this epic, or one not yet worked, still stops **that child**: it is not claimed, it is
+  recorded and skipped, and so is anything blocked by it. That is a ruling, not a red flag, and it
+  feeds the terminal condition.
 - **Never claim a child that needs a person.** Claiming asserts armature is working it, which is
-  false. Leave it in the board's todo status, skip it, and carry on to the next actionable child.
-  When skipping leaves nothing actionable — the rest need a person, or are blocked by one that does
-  — **end the run** and report what needs doing. That is a terminal condition, not a red flag: no
-  ruling you could make would produce the work. A child is known to need a person either by the
-  `humanLabel` declared in `.armature.json`, or because the subagent read the issue and reported so
-  before claiming anything.
+  false. Leave it in the board's todo status, record it, skip it, and carry on to the next
+  actionable child. When skipping leaves nothing actionable — the rest need a person, or are
+  blocked by one that does — **end the run** and report what needs doing. That is a terminal
+  condition, not a red flag: no ruling you could make would produce the work. A child is known to
+  need a person either by the `humanLabel` declared in `.armature.json`, or because the subagent
+  read the issue and reported so before claiming anything.
 - **One child at a time.** Not because parallelism is wrong, but because the cross-child collision
   check is a sequence and would become a race, and a pause mid-fan-out is not resumable.
 - **Never merge.** Armature opens pull requests; people merge them. You hand back a stack and its

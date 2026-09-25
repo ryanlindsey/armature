@@ -40,6 +40,15 @@ it is an override the single-item skill never names. Naming it there — "unless
 dispatched you rules the prerequisite reachable from your base" — would make the composition
 explicit. Deferred from ryanlindsey/armature#62, whose epic forbids modifying `working-the-board`.
 
+**A stacked child's PR may be invisible to `epic_survey`.** `pullRequests` comes from
+`closedByPullRequestsReferences`, and GitHub honours a closing keyword only on a PR that targets the
+default branch. Every stacked child's PR targets its blocker's branch, so it likely has no link, and
+the ledger would read it as "claimed, no PR" — interrupted. Found in review of
+ryanlindsey/armature#62 and **not yet confirmed live**. `working-an-epic` works around it with a
+per-run record of each child's reported PR, which does not survive compaction; the durable fix is
+server-side — find a child's PR by its head branch, or link it explicitly — and should be confirmed
+on the integration board before `/armature-epic` (ryanlindsey/armature#63) is relied on.
+
 **`humanLabel` is not read by any code.** ryanlindsey/armature#58 declares it in `.armature.json`
 and `working-an-epic` consults it, but `server/config.ts` neither parses nor validates it, so a typo
 in the key is silently a board with no human-only children. `/armature-doctor` reporting it would be
