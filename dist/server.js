@@ -17667,6 +17667,7 @@ async function claim2(client, board, snapshot, ref, options = {}) {
 async function checkEntries(client, board, ref, requests, options = {}) {
   const read = options.read ?? ((r) => getItem(client, board, r));
   const before = await read(ref);
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board);
   const { body, changed } = applyChecks(ref, before.body, requests);
   if (options.dryRun) return { ...before, body, checklist: parseChecklist(body) };
   if (changed > 0) await client.graphql(UPDATE_ISSUE_BODY, { issue: before.id, body });

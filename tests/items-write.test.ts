@@ -223,12 +223,13 @@ describe('checkEntries', () => {
 
   // One harness for every case below. `body` is the live issue body: the fake read derives its
   // checklist from it, and the fake write replaces it, so a read-back sees what a write left.
-  function harness(initial: string, opts: { swallowWrite?: boolean } = {}) {
+  function harness(initial: string, opts: { swallowWrite?: boolean; offBoard?: boolean } = {}) {
     const sent: { query: string; variables: Record<string, unknown> }[] = []
     let body = initial
     const read: ItemReader = async () => ({
       ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
-      status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+      status: opts.offBoard ? null : 'Todo', projectItemId: opts.offBoard ? null : 'PVTI_1',
+      parent: null, epic: null, blockedBy: [],
       checklist: parseChecklist(body),
     })
     const client = {
@@ -378,6 +379,23 @@ describe('checkEntries', () => {
     expect(sent).toHaveLength(0)
     expect(after.body).toBe(TWO.replace('- [ ] first', '- [x] first'))
     expect(after.checklist.find((e) => e.text === 'first')!.checked).toBe(true)
+  })
+
+  // The body write is an ordinary issue mutation, so GitHub would accept it for any issue the
+  // credential can edit. The board is what scopes armature's writes, and setStatus/claim refuse an
+  // off-board item the same way. Checked before applyChecks, so it wins over an unmatched entry.
+  it.each([
+    ['for real', false],
+    ['under dryRun', true],
+  ])('refuses to write to an item that is not on the board, %s', async (_label, dryRun) => {
+    const { client, read, sent, body } = harness(TWO, { offBoard: true })
+
+    await expect(
+      checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read, dryRun }),
+    ).rejects.toThrow(NotOnBoardError)
+
+    expect(sent).toHaveLength(0)
+    expect(body()).toBe(TWO)
   })
 
   it('raises the same error under dryRun as it does for real', async () => {

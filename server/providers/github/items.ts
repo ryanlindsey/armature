@@ -362,8 +362,12 @@ export async function checkEntries(
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
 
   const before = await read(ref)
-  // Runs on both paths, above the dry-run branch, so a dry run raises exactly what a real run
-  // would. A dry-run prediction that does not match the real path is the recurring bug here.
+  // updateIssue would rewrite any issue this credential can edit; the board is what scopes
+  // armature's writes, so an off-board item is refused here exactly as setStatus refuses it.
+  // This and applyChecks run on both paths, above the dry-run branch, so a dry run raises exactly
+  // what a real run would. A dry-run prediction that does not match the real path is the
+  // recurring bug here.
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
   const { body, changed } = applyChecks(ref, before.body, requests)
 
   if (options.dryRun) return { ...before, body, checklist: parseChecklist(body) }
