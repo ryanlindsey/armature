@@ -345,7 +345,29 @@ describe('checkEntries', () => {
 
     expect(sent).toHaveLength(1)
     expect(error).toBeInstanceOf(UnverifiedWriteError)
-    expect(error!.message).toMatch(/no entry "first"/)
+    expect(error!.message).toContain('shows "no such entry"')
+  })
+
+  it('refuses a read-back that now holds the entry twice, rather than trusting the first', async () => {
+    const { client, sent } = harness('- [ ] first')
+    let reads = 0
+    const doubling: ItemReader = async () => {
+      // A concurrent edit adds a second "first" before the read-back; the ticked one comes first.
+      const body = reads++ === 0 ? '- [ ] first' : '- [x] first\n- [ ] first'
+      return {
+        ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        checklist: parseChecklist(body),
+      }
+    }
+
+    const error = await checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read: doubling })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(sent).toHaveLength(1)
+    expect(error).toBeInstanceOf(UnverifiedWriteError)
+    expect(error!.message).toContain('2 entries with this text')
   })
 
   it('computes and reports without sending under dryRun', async () => {

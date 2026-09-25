@@ -373,12 +373,19 @@ export async function checkEntries(
   const after = await read(ref)
   const box = (checked: boolean) => (checked ? '[x]' : '[ ]')
   for (const request of requests) {
-    const entry = after.checklist.find((e) => e.text === request.text)
+    // Every match, not the first: a concurrent edit that duplicates the text leaves the read-back
+    // unable to say which line the write reached, which applyChecks calls ambiguous before writing.
+    const matches = after.checklist.filter((e) => e.text === request.text)
+    const entry = matches.length === 1 ? matches[0]! : null
     if (!entry || entry.checked !== request.checked) {
       throw new UnverifiedWriteError(
         ref,
         `${box(request.checked)} ${request.text}`,
-        entry ? `${box(entry.checked)} ${entry.text}` : `no entry "${request.text}"`,
+        entry
+          ? `${box(entry.checked)} ${entry.text}`
+          : matches.length === 0
+            ? 'no such entry'
+            : `${matches.length} entries with this text`,
         `The body ${changed > 0 ? 'was sent, and may or may not have landed' : 'was not rewritten'}. ` +
           `Run item_get on ${formatRef(ref)} to see its checklist as it stands before retrying.`,
       )
