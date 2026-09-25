@@ -18122,6 +18122,27 @@ var TOOLS = [
       properties: { ref: { type: "string", description: "owner/repo#number" } },
       required: ["ref"]
     }
+  },
+  {
+    name: "item_check",
+    description: "Set the state of entries on a work item's checklist. Entries are addressed by their exact text and each must match exactly once; the batch is all-or-nothing. Verified by reading the item back.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "owner/repo#number" },
+        entries: {
+          type: "array",
+          minItems: 1,
+          description: "Each entry's text exactly as item_get reported it, and the state to set.",
+          items: {
+            type: "object",
+            properties: { text: { type: "string" }, checked: { type: "boolean" } },
+            required: ["text", "checked"]
+          }
+        }
+      },
+      required: ["ref", "entries"]
+    }
   }
 ];
 function ok(value) {
@@ -18149,6 +18170,14 @@ var EpicUnsupportedError = class extends Error {
       "This board provider does not report epics. Reporting one requires linked pull requests with their branches, and an adapter that cannot supply those cannot support an epic run honestly \u2014 empty arrays would make an interrupted child indistinguishable from one in flight. Work the children one at a time instead."
     );
     this.name = "EpicUnsupportedError";
+  }
+};
+var ChecklistUnsupportedError = class extends Error {
+  constructor() {
+    super(
+      "This board provider does not support checklists. Checklist entries are a Markdown task-list shape, and an adapter for a tracker without one declines to implement it rather than implementing it and throwing. Nothing was written. Change the entries in the tracker itself instead."
+    );
+    this.name = "ChecklistUnsupportedError";
   }
 };
 function describeValue(value) {
@@ -18181,6 +18210,28 @@ function optionalString(tool, field, value) {
   if (value === void 0 || value === null) return void 0;
   if (typeof value !== "string") throw new InvalidArgumentError(tool, field, "a string", value);
   return value;
+}
+function checklistEntries(tool, value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new InvalidArgumentError(tool, "entries", "a non-empty array of { text, checked }", value);
+  }
+  return value.map((raw, i) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      throw new InvalidArgumentError(tool, `entries[${i}]`, "an object of { text, checked }", raw);
+    }
+    const entry = raw;
+    if (typeof entry.text !== "string" || entry.text.trim() === "") {
+      throw new InvalidArgumentError(tool, `entries[${i}].text`, "the entry's exact text", entry.text);
+    }
+    if (typeof entry.checked !== "boolean") {
+      throw new InvalidArgumentError(tool, `entries[${i}].checked`, "true or false", entry.checked);
+    }
+    return { text: entry.text, checked: entry.checked };
+  });
+}
+function ticked(item) {
+  const list = item.checklist;
+  return list ? `${list.filter((e) => e.checked).length} of ${list.length}` : null;
 }
 function makeRefResolver(provider, read) {
   let cachedMap = null;
@@ -18309,6 +18360,24 @@ async function dispatch(provider, name, args, options) {
       if (!provider.epic) throw new EpicUnsupportedError();
       return ok(await provider.epic(ref));
     }
+    case "item_check": {
+      const ref = await resolveRef(refArgument(name, "ref", args.ref));
+      const entries = checklistEntries(name, args.entries);
+      if (!provider.check) throw new ChecklistUnsupportedError();
+      const before = await provider.getItem(ref);
+      const after = await provider.check(ref, entries);
+      logMutation(
+        {
+          ref: formatRef(ref),
+          field: "Checklist",
+          before: ticked(before),
+          after: ticked(after),
+          dryRun: options.dryRun
+        },
+        options.logWrite
+      );
+      return ok(presentMutation(after, options.dryRun));
+    }
     default:
       throw new Error(`Unknown tool "${name}".`);
   }
@@ -18360,6 +18429,7 @@ if (isEntryPoint(import.meta.url, process.argv[1])) {
   });
 }
 export {
+  ChecklistUnsupportedError,
   EpicUnsupportedError,
   InvalidArgumentError,
   TOOLS,

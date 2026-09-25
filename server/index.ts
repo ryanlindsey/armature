@@ -13,7 +13,7 @@ import { GitHubBoardProvider } from './providers/github/provider.js'
 import { ALIAS_REF, buildAliasMap, readSiblingConfigFrom, resolveAlias } from './providers/github/aliases.js'
 import type { AliasMap, SiblingConfigReader } from './providers/github/aliases.js'
 import { selectNext } from './providers/github/next.js'
-import type { BoardProvider } from './providers/types.js'
+import type { BoardItem, BoardProvider, ChecklistRequest } from './providers/types.js'
 import { VERSION } from './version.js'
 
 const DRY_RUN = process.env.ARMATURE_DRY_RUN === '1'
@@ -112,6 +112,30 @@ export const TOOLS = [
       required: ['ref'],
     },
   },
+  {
+    name: 'item_check',
+    description:
+      "Set the state of entries on a work item's checklist. Entries are addressed by their " +
+      'exact text and each must match exactly once; the batch is all-or-nothing. Verified by ' +
+      'reading the item back.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'owner/repo#number' },
+        entries: {
+          type: 'array',
+          minItems: 1,
+          description: "Each entry's text exactly as item_get reported it, and the state to set.",
+          items: {
+            type: 'object',
+            properties: { text: { type: 'string' }, checked: { type: 'boolean' } },
+            required: ['text', 'checked'],
+          },
+        },
+      },
+      required: ['ref', 'entries'],
+    },
+  },
 ]
 
 function ok(value: unknown) {
@@ -178,6 +202,21 @@ export class EpicUnsupportedError extends Error {
   }
 }
 
+// `BoardProvider.check` is optional for the same reason: a checklist embedded in prose is a
+// Markdown task-list shape, and a tracker without one declines it rather than implementing it and
+// throwing.
+export class ChecklistUnsupportedError extends Error {
+  constructor() {
+    super(
+      'This board provider does not support checklists. Checklist entries are a Markdown ' +
+        'task-list shape, and an adapter for a tracker without one declines to implement it ' +
+        'rather than implementing it and throwing. Nothing was written. Change the entries in ' +
+        'the tracker itself instead.',
+    )
+    this.name = 'ChecklistUnsupportedError'
+  }
+}
+
 function describeValue(value: unknown): string {
   if (value === undefined) return 'nothing'
   if (value === null) return 'null'
@@ -225,6 +264,38 @@ function optionalString(tool: string, field: string, value: unknown): string | u
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'string') throw new InvalidArgumentError(tool, field, 'a string', value)
   return value
+}
+
+/**
+ * item_check's `entries`. The transport performs no schema validation, so `minItems` and the
+ * element shape advertised in TOOLS are documentation until they are checked here. Each element
+ * is rebuilt from its two fields, so nothing else a caller sends reaches the provider.
+ */
+function checklistEntries(tool: string, value: unknown): ChecklistRequest[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new InvalidArgumentError(tool, 'entries', 'a non-empty array of { text, checked }', value)
+  }
+  // Each error names the element by index: in a batch of ten, "entries[].text" leaves the caller
+  // to find the bad one themselves.
+  return value.map((raw: unknown, i: number) => {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      throw new InvalidArgumentError(tool, `entries[${i}]`, 'an object of { text, checked }', raw)
+    }
+    const entry = raw as Record<string, unknown>
+    if (typeof entry.text !== 'string' || entry.text.trim() === '') {
+      throw new InvalidArgumentError(tool, `entries[${i}].text`, "the entry's exact text", entry.text)
+    }
+    if (typeof entry.checked !== 'boolean') {
+      throw new InvalidArgumentError(tool, `entries[${i}].checked`, 'true or false', entry.checked)
+    }
+    return { text: entry.text, checked: entry.checked }
+  })
+}
+
+/** "2 of 6". One write, one log line, whatever the batch size. */
+function ticked(item: BoardItem): string | null {
+  const list = item.checklist
+  return list ? `${list.filter((e) => e.checked).length} of ${list.length}` : null
 }
 
 export type RefResolver = (token: string) => Promise<WorkItemRef>
@@ -442,6 +513,27 @@ export async function dispatch(
       const ref = await resolveRef(refArgument(name, 'ref', args.ref))
       if (!provider.epic) throw new EpicUnsupportedError()
       return ok(await provider.epic(ref))
+    }
+
+    case 'item_check': {
+      // Both arguments are checked before the capability, so a malformed call is reported as
+      // malformed rather than as unsupported — the same order epic_survey follows.
+      const ref = await resolveRef(refArgument(name, 'ref', args.ref))
+      const entries = checklistEntries(name, args.entries)
+      if (!provider.check) throw new ChecklistUnsupportedError()
+      const before = await provider.getItem(ref)
+      const after = await provider.check(ref, entries)
+      logMutation(
+        {
+          ref: formatRef(ref),
+          field: 'Checklist',
+          before: ticked(before),
+          after: ticked(after),
+          dryRun: options.dryRun,
+        },
+        options.logWrite,
+      )
+      return ok(presentMutation(after, options.dryRun))
     }
 
     default:
