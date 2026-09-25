@@ -96,7 +96,7 @@ function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
 // behind the config gate must close first:
 //   - indentation that only reaches 4+ columns after CommonMark's tab-stop expansion (e.g. a
 //     line starting with two spaces then a tab) is not recognised as indented code — the
-//     current check is the literal `/^( {4,}|\t)/` in stripCodeBlocks, not a tab-stop-aware
+//     current check is the literal `/^( {4,}|\t)/` in checklist.ts's codeMask, not a tab-stop-aware
 //     column count.
 //   - HTML blocks (e.g. `<pre>Epic: acme/web#1</pre>`) are not stripped at all; only the three
 //     Markdown code-block syntaxes (fenced by backticks, fenced by tildes, indented) are.
