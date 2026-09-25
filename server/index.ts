@@ -91,6 +91,18 @@ export const TOOLS = [
       required: ['repo', 'title', 'body'],
     },
   },
+  {
+    name: 'epic_survey',
+    description:
+      "An epic and its children in working order: each child's status, state, labels, blockers " +
+      'and linked pull requests with their branches, plus which child is next and why. Reports ' +
+      'any sub-issue that is not on the board separately rather than dropping it.',
+    inputSchema: {
+      type: 'object',
+      properties: { ref: { type: 'string', description: 'owner/repo#number' } },
+      required: ['ref'],
+    },
+  },
 ]
 
 function ok(value: unknown) {
@@ -140,6 +152,20 @@ export class InvalidArgumentError extends Error {
         `Tool arguments are not checked by the transport, so armature checks them itself.`,
     )
     this.name = 'InvalidArgumentError'
+  }
+}
+
+// `BoardProvider.epic` is optional: an adapter that cannot report linked pull requests with their
+// branches declines it rather than returning empty arrays that would pass for "nothing in flight".
+export class EpicUnsupportedError extends Error {
+  constructor() {
+    super(
+      'This board provider does not report epics. Reporting one requires linked pull requests ' +
+        'with their branches, and an adapter that cannot supply those cannot support an epic run ' +
+        'honestly — empty arrays would make an interrupted child indistinguishable from one in ' +
+        'flight. Work the children one at a time instead.',
+    )
+    this.name = 'EpicUnsupportedError'
   }
 }
 
@@ -375,6 +401,14 @@ export async function dispatch(
         options.logWrite,
       )
       return ok(presentCreated(created, options.dryRun))
+    }
+
+    case 'epic_survey': {
+      // Resolved before the capability check, so a malformed call is reported as malformed
+      // rather than as unsupported.
+      const ref = await resolveRef(refArgument(name, 'ref', args.ref))
+      if (!provider.epic) throw new EpicUnsupportedError()
+      return ok(await provider.epic(ref))
     }
 
     default:

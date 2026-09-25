@@ -17802,6 +17802,15 @@ var TOOLS = [
       },
       required: ["repo", "title", "body"]
     }
+  },
+  {
+    name: "epic_survey",
+    description: "An epic and its children in working order: each child's status, state, labels, blockers and linked pull requests with their branches, plus which child is next and why. Reports any sub-issue that is not on the board separately rather than dropping it.",
+    inputSchema: {
+      type: "object",
+      properties: { ref: { type: "string", description: "owner/repo#number" } },
+      required: ["ref"]
+    }
   }
 ];
 function ok(value) {
@@ -17821,6 +17830,14 @@ var InvalidArgumentError = class extends Error {
       `${tool} needs "${field}" to be ${expected}, but received ${describeValue(got)}. Tool arguments are not checked by the transport, so armature checks them itself.`
     );
     this.name = "InvalidArgumentError";
+  }
+};
+var EpicUnsupportedError = class extends Error {
+  constructor() {
+    super(
+      "This board provider does not report epics. Reporting one requires linked pull requests with their branches, and an adapter that cannot supply those cannot support an epic run honestly \u2014 empty arrays would make an interrupted child indistinguishable from one in flight. Work the children one at a time instead."
+    );
+    this.name = "EpicUnsupportedError";
   }
 };
 function describeValue(value) {
@@ -17958,6 +17975,11 @@ async function dispatch(provider, name, args, options) {
       );
       return ok(presentCreated(created, options.dryRun));
     }
+    case "epic_survey": {
+      const ref = await resolveRef(refArgument(name, "ref", args.ref));
+      if (!provider.epic) throw new EpicUnsupportedError();
+      return ok(await provider.epic(ref));
+    }
     default:
       throw new Error(`Unknown tool "${name}".`);
   }
@@ -18009,6 +18031,7 @@ if (isEntryPoint(import.meta.url, process.argv[1])) {
   });
 }
 export {
+  EpicUnsupportedError,
   InvalidArgumentError,
   TOOLS,
   dispatch,

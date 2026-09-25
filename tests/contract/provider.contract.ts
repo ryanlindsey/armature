@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { BareRefError, parseRef } from '../../server/ref.js'
+import { BareRefError, formatRef, parseRef } from '../../server/ref.js'
+import type { WorkItemRef } from '../../server/ref.js'
+import { selectNext } from '../../server/providers/github/next.js'
 import type { BoardProvider } from '../../server/providers/types.js'
+
+/**
+ * What the fixture board holds beyond the guarantees every adapter owes.
+ *
+ * `epic` is optional because `BoardProvider.epic` is: an adapter that cannot report linked pull
+ * requests declines epics, and its harness passes no epic ref, which skips that block. A harness
+ * that does pass one is declaring the adapter supports epics, and the block holds it to that.
+ */
+export type ContractFixture = { epic?: WorkItemRef }
 
 /**
  * The backend-agnostic guarantees every adapter must satisfy. A Jira adapter's definition of
@@ -15,6 +26,7 @@ import type { BoardProvider } from '../../server/providers/types.js'
 export function describeBoardProvider(
   name: string,
   makeProvider: () => Promise<BoardProvider>,
+  fixture: ContractFixture = {},
 ): void {
   describe(`${name} satisfies the board provider contract`, () => {
     // Read the precondition first: everything after it assumes this passed.
@@ -140,6 +152,42 @@ export function describeBoardProvider(
         expect(item.ref).toEqual(requested)
         expect(item.title).toBe(onTheBoard.title)
       }
+    })
+
+    describe.skipIf(!fixture.epic)('epics, if the adapter reports them', () => {
+      const epicRef = fixture.epic!
+
+      it("returns the epic's children, and the epic itself is not among them", async () => {
+        const provider = await makeProvider()
+        expect(provider.epic, 'the harness named an epic, so the adapter must report one').toBeDefined()
+        const survey = await provider.epic!(epicRef)
+        expect(survey.children.length).toBeGreaterThan(0)
+        expect(survey.children.map((c) => formatRef(c.ref))).not.toContain(formatRef(epicRef))
+      })
+
+      // Same-numbered children in different repositories must stay two children, each carrying
+      // its own title — the collision the ref type exists for, asked of the epic path.
+      it('keeps every child distinct and describes each by its own item', async () => {
+        const provider = await makeProvider()
+        const survey = await provider.epic!(epicRef)
+        const refs = survey.children.map((c) => formatRef(c.ref))
+        expect(new Set(refs).size).toBe(refs.length)
+        for (const child of survey.children) {
+          expect(child.title).toBe((await provider.getItem(child.ref)).title)
+        }
+      })
+
+      // Two rankings that could disagree is a bug waiting to be written: epic_survey's `next`
+      // must be board_next's answer, not a second opinion.
+      it('agrees with board_next about which child is next', async () => {
+        const provider = await makeProvider()
+        const survey = await provider.epic!(epicRef)
+        const next = selectNext(await provider.survey(), { epic: epicRef })
+        // Two nulls would agree about nothing: the fixture must give the ranking something to rank.
+        expect(next.kind, 'the fixture epic must have an actionable child').toBe('item')
+        expect(survey.next.ref).toEqual(next.kind === 'item' ? next.item.ref : null)
+        expect(survey.next.because).toBe(next.because)
+      })
     })
   })
 }
