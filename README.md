@@ -156,7 +156,7 @@ The MCP server exposes seven tools:
 | --- | --- |
 | `board_next` | The next actionable item, with the reason it won — or a blocked explanation. Narrow it with `repo` or `epic`. Never returns an item titled `Spec:` or `Epic:`, and names the todo items it skipped for that title. |
 | `board_survey` | A normalized snapshot of the whole board: items, repositories, statuses, collisions. |
-| `item_get` | One work item's body, status, and epic (with the repository the epic lives in). |
+| `item_get` | One work item's body, status, task-list checklist (each entry's text, state and nearest heading), and epic (with the repository the epic lives in). |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
 | `item_create` | Create an issue, add it to the board, and set its status — todo unless `status` names another — then optionally file it under a `parent` and mark it blocked by `blockedBy`, so `board_next` can return it, correctly ranked, without a second call. Each step is verified, and a failure says exactly which steps landed. |

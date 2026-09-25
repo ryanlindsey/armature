@@ -1,11 +1,13 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
-import type { BoardItem, BoardSnapshot, CreateInput } from '../types.js'
-import { codeMask } from './checklist.js'
+import type { BoardItem, BoardSnapshot, ChecklistEntry, CreateInput } from '../types.js'
+import { codeMask, parseChecklist } from './checklist.js'
 import { GitHubClient, GraphQLError } from './client.js'
 
 export type ItemDetail = BoardItem & {
   body: string
+  /** Task-list entries parsed from `body`. See parseChecklist for what counts as one. */
+  checklist: ChecklistEntry[]
   projectItemId: string | null
   /**
    * The epic this item belongs to.
@@ -195,6 +197,7 @@ export async function getItem(
     id: issue.id,
     title: issue.title,
     body: issue.body ?? '',
+    checklist: parseChecklist(issue.body ?? ''),
     state: issue.state,
     status: projectItem?.fieldValueByName?.name ?? null,
     projectItemId: projectItem?.id ?? null,
@@ -582,7 +585,8 @@ export async function createItem(
 
   if (options.dryRun) {
     return {
-      ref, id: '(dry-run)', title: input.title, body: input.body, state: 'OPEN',
+      ref, id: '(dry-run)', title: input.title, body: input.body,
+      checklist: parseChecklist(input.body), state: 'OPEN',
       status, projectItemId: '(dry-run)',
       parent: input.parent ?? null, epic: input.parent ?? null,
       blockedBy: blockers,

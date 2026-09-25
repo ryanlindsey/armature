@@ -9,6 +9,7 @@ import {
   UnlinkedItemError,
   UnsequencedItemError,
 } from '../server/providers/github/items.js'
+import { parseChecklist } from '../server/providers/github/checklist.js'
 import { GraphQLError } from '../server/providers/github/client.js'
 import { selectNext } from '../server/providers/github/next.js'
 import type { WorkItemRef } from '../server/ref.js'
@@ -44,6 +45,19 @@ describe('createItem', () => {
     const result = await createItem(client, board, snapshot, input, { dryRun: true })
     expect(client.graphql).not.toHaveBeenCalled()
     expect(result.title).toBe('A ticket')
+  })
+
+  // The real path returns getItem's read-back, which parses the body it just wrote; the
+  // prediction parses the same body, so a dry run reports the checklist the item will have.
+  it('predicts the checklist the created item will report', async () => {
+    const client = { graphql: vi.fn() } as any
+    const body = '## Acceptance\n\n- [ ] first\n- [x] second'
+    const result = await createItem(client, board, snapshot, { ...input, body }, { dryRun: true })
+
+    expect(result.checklist).toEqual([
+      { text: 'first', checked: false, heading: 'Acceptance' },
+      { text: 'second', checked: true, heading: 'Acceptance' },
+    ])
   })
 
   // The dry run's whole value is that it predicts the real path. Reporting a status the real
@@ -169,6 +183,7 @@ function fakeBoard(
     id: 'I_1',
     title: input.title,
     body: input.body,
+    checklist: parseChecklist(input.body),
     state: 'OPEN' as const,
     status,
     projectItemId: options.unreadableMembership ? null : 'PVTI_1',

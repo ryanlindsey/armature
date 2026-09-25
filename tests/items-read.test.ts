@@ -400,3 +400,43 @@ describe('getItem reports blockers', () => {
     expect((err as Error).message).toContain('acme/web#61')
   })
 })
+
+describe('getItem reports the checklist', () => {
+  const credential = { token: 'secret-value', source: 'gh-cli' as const }
+  const board = { provider: 'github' as const, owner: 'acme', number: 1 }
+  const ref = { owner: 'acme', repo: 'web', number: 278 }
+
+  function clientWithBody(body: string | null) {
+    const response = {
+      data: {
+        repository: {
+          issue: {
+            id: 'I_1', number: 278, title: 't', body, state: 'OPEN', parent: null,
+            projectItems: { nodes: [], pageInfo: { hasNextPage: false } },
+          },
+        },
+      },
+    }
+    return new GitHubClient(credential, async () =>
+      new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+  }
+
+  it('reports every entry with its state and heading', async () => {
+    const item = await getItem(clientWithBody('## Acceptance\n\n- [x] done\n- [ ] not done'), board, ref)
+
+    expect(item.checklist).toEqual([
+      { text: 'done', checked: true, heading: 'Acceptance' },
+      { text: 'not done', checked: false, heading: 'Acceptance' },
+    ])
+  })
+
+  it('reports an empty checklist for an issue with no body', async () => {
+    const item = await getItem(clientWithBody(null), board, ref)
+
+    expect(item.checklist).toEqual([])
+  })
+})

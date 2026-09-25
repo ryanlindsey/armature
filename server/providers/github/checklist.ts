@@ -1,3 +1,5 @@
+import type { ChecklistEntry } from '../types.js'
+
 // One boolean per line of `body`, true when that line is inside fenced or indented code.
 //
 // Extracted from items.ts's stripCodeBlocks, which now wraps it. The two callers want the same
@@ -62,4 +64,36 @@ function fenceRun(text: string, char: '`' | '~'): number {
   let n = 0
   while (text[n] === char) n++
   return n
+}
+
+const ENTRY = /^[-*+]\s+\[([ xX])\]\s+(.+)$/
+// An optional closing sequence must be preceded by whitespace, as in GFM: `## C#` is "C#".
+const HEADING = /^#{1,6}\s+(.+?)(?:\s+#+)?\s*$/
+
+// Every task-list entry outside code, with the nearest preceding ATX heading as context.
+//
+// The heading is reported, never interpreted: which heading means "acceptance" is the caller's
+// judgment, and parseEpicFromBody is the record of what happens when the server reads intent
+// out of prose. A heading inside code is not a heading, so the mask applies to both.
+export function parseChecklist(body: string): ChecklistEntry[] {
+  const lines = body.split(/\r?\n/)
+  const mask = codeMask(body)
+  const entries: ChecklistEntry[] = []
+  let heading: string | null = null
+
+  for (const [i, rawLine] of lines.entries()) {
+    if (mask[i]) continue
+    const line = rawLine.trim()
+
+    const head = HEADING.exec(line)
+    if (head) {
+      heading = head[1]!.trim()
+      continue
+    }
+
+    const entry = ENTRY.exec(line)
+    if (entry) entries.push({ text: entry[2]!.trim(), checked: entry[1] !== ' ', heading })
+  }
+
+  return entries
 }

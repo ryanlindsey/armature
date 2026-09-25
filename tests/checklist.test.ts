@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { codeMask } from '../server/providers/github/checklist.js'
+import { codeMask, parseChecklist } from '../server/providers/github/checklist.js'
 
 describe('codeMask', () => {
   it('marks backtick-fenced lines, delimiters included', () => {
@@ -111,5 +111,57 @@ describe('codeMask', () => {
     expect(codeMask(['    text', '　```', 'more'].join('\n'))).toEqual([
       false, false, false,
     ])
+  })
+})
+
+describe('parseChecklist', () => {
+  it('reads every task-list marker GFM allows', () => {
+    const body = ['- [ ] dash', '* [ ] star', '+ [ ] plus'].join('\n')
+    expect(parseChecklist(body).map((e) => e.text)).toEqual(['dash', 'star', 'plus'])
+  })
+
+  it('reads both cases of a ticked box', () => {
+    expect(parseChecklist('- [x] lower\n- [X] upper').map((e) => e.checked)).toEqual([true, true])
+  })
+
+  it('ignores entries inside a backtick fence', () => {
+    const body = ['- [ ] real', '```', '- [ ] sample', '```'].join('\n')
+    expect(parseChecklist(body).map((e) => e.text)).toEqual(['real'])
+  })
+
+  it('ignores entries inside a tilde fence', () => {
+    const body = ['- [ ] real', '~~~', '- [ ] sample', '~~~'].join('\n')
+    expect(parseChecklist(body).map((e) => e.text)).toEqual(['real'])
+  })
+
+  it('ignores entries inside indented code', () => {
+    expect(parseChecklist('- [ ] real\n\n    - [ ] sample')).toHaveLength(1)
+  })
+
+  it('attributes each entry to its nearest preceding heading', () => {
+    const body = ['## Notes', '- [ ] a', '## Acceptance', '- [ ] b', '- [ ] c'].join('\n')
+    expect(parseChecklist(body).map((e) => e.heading)).toEqual(['Notes', 'Acceptance', 'Acceptance'])
+  })
+
+  it('strips an ATX closing sequence but keeps a trailing hash that is part of the text', () => {
+    const body = ['## Acceptance ##', '- [ ] a', '## C#', '- [ ] b'].join('\n')
+    expect(parseChecklist(body).map((e) => e.heading)).toEqual(['Acceptance', 'C#'])
+  })
+
+  it('does not take a heading from inside code', () => {
+    const body = ['## Real', '```', '## Sample', '```', '- [ ] a'].join('\n')
+    expect(parseChecklist(body)[0]!.heading).toBe('Real')
+  })
+
+  it('reports a null heading for an entry with nothing above it', () => {
+    expect(parseChecklist('- [ ] orphan')[0]!.heading).toBeNull()
+  })
+
+  it('trims the entry text', () => {
+    expect(parseChecklist('- [ ]   spaced   ')[0]!.text).toBe('spaced')
+  })
+
+  it('returns an empty list for a body with no checklist', () => {
+    expect(parseChecklist('just prose\n\n## Heading\n\nmore prose')).toEqual([])
   })
 })
