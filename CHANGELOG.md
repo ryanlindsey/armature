@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/ryanlindsey/armature/compare/armature-v0.7.0...armature-v0.8.0) (2026-09-25)
+
+
+### Features
+
+* **checklist:** add applyChecks, a byte-exact checklist transform ([#88](https://github.com/ryanlindsey/armature/issues/88)) ([49eafb3](https://github.com/ryanlindsey/armature/commit/49eafb34e1d694e0640fdb4d81f9ca9d44265831))
+* **checklist:** write checklist state back to the issue, verified ([#89](https://github.com/ryanlindsey/armature/issues/89)) ([aaa8738](https://github.com/ryanlindsey/armature/commit/aaa8738938154bfa5e248db64e88d44b140833b9))
+* **item_check:** expose checklist writes as a tool ([#90](https://github.com/ryanlindsey/armature/issues/90)) ([5b822ea](https://github.com/ryanlindsey/armature/commit/5b822ea21c99aeb99d2d3c269e4ec10459257523))
+* **item_get:** report the item's checklist entries ([#87](https://github.com/ryanlindsey/armature/issues/87)) ([56fe670](https://github.com/ryanlindsey/armature/commit/56fe6706c57158ba62406609c83814e23b496b13))
+* **skill:** settle acceptance criteria and carry the receipt into the PR ([#91](https://github.com/ryanlindsey/armature/issues/91)) ([3edb0ad](https://github.com/ryanlindsey/armature/commit/3edb0adc03387f73e8b007725b380466b3ffae97))
+
 ## [0.7.0](https://github.com/ryanlindsey/armature/compare/armature-v0.6.0...armature-v0.7.0) (2026-09-25)
 
 
