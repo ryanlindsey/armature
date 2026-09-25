@@ -15,10 +15,16 @@ import type { BoardProvider } from '../../server/providers/types.js'
  * adapter can be driven to create issues here, where `owner/repo` is the repository to create
  * in and `issuesCreated` counts every issue the backend has created so far — including ones a
  * failed call left behind, which is exactly what "nothing was created" has to be checked against.
+ *
+ * `checklist` is optional because `BoardProvider.check` is: a tracker whose items are not Markdown
+ * has no task list to tick. A harness passes it — an item on the board whose checklist holds at
+ * least two unticked entries — to declare that its adapter implements `check`, and the block
+ * holds it to that. Absent, the block is skipped.
  */
 export type ContractFixture = {
   epic?: WorkItemRef
   writes?: { owner: string; repo: string; issuesCreated: () => number }
+  checklist?: WorkItemRef
 }
 
 /**
@@ -195,6 +201,44 @@ export function describeBoardProvider(
         expect(next.kind, 'the fixture epic must have an actionable child').toBe('item')
         expect(survey.next.ref).toEqual(next.kind === 'item' ? next.item.ref : null)
         expect(survey.next.because).toBe(next.because)
+      })
+    })
+
+    // Optional capability. A tracker whose items are not Markdown has no checklist, so this is not
+    // part of the surface every adapter must implement — but an adapter that does implement it
+    // must implement it this way.
+    describe.skipIf(!fixture.checklist)('checklists, if the adapter has them', () => {
+      const ref = fixture.checklist!
+
+      it('ticks an entry and reports it ticked when the item is read again', async () => {
+        const provider = await makeProvider()
+        expect(provider.check, 'the harness named a checklist item, so the adapter must implement check')
+          .toBeDefined()
+        const before = await provider.getItem(ref)
+        const target = before.checklist?.find((e) => !e.checked)
+        expect(target, 'the fixture item must hold an unticked entry').toBeDefined()
+
+        await provider.check!(ref, [{ text: target!.text, checked: true }])
+
+        const after = await provider.getItem(ref)
+        expect(after.checklist!.find((e) => e.text === target!.text)!.checked).toBe(true)
+      })
+
+      it('leaves every entry unchanged when one entry in the batch is unmatched', async () => {
+        const provider = await makeProvider()
+        const before = await provider.getItem(ref)
+        const target = before.checklist?.find((e) => !e.checked)
+        expect(target, 'the fixture item must hold an unticked entry').toBeDefined()
+
+        await expect(
+          provider.check!(ref, [
+            { text: target!.text, checked: true },
+            { text: 'no entry reads this', checked: true },
+          ]),
+        ).rejects.toThrow()
+
+        const after = await provider.getItem(ref)
+        expect(after.checklist).toEqual(before.checklist)
       })
     })
 

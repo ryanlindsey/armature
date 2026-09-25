@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dispatch, EpicUnsupportedError, InvalidArgumentError, makeRefResolver, TOOLS } from '../server/index.js'
+import {
+  ChecklistUnsupportedError, dispatch, EpicUnsupportedError, InvalidArgumentError, makeRefResolver, TOOLS,
+} from '../server/index.js'
 import { AliasConflictError } from '../server/providers/github/aliases.js'
 import type { SiblingConfigReader } from '../server/providers/github/aliases.js'
 import type { BoardProvider, BoardSnapshot, EpicSurvey } from '../server/providers/types.js'
@@ -775,5 +777,111 @@ describe('dispatch: item_create takes a status and blockers', () => {
     expect(tool.inputSchema.required).not.toContain('blockedBy')
     expect(tool.description).toMatch(/blocked/i)
     expect(tool.description).not.toMatch(/set it to the board's todo status, and/)
+  })
+})
+
+describe('item_check', () => {
+  const REF = { owner: 'acme', repo: 'web', number: 7 }
+  const item = (first: boolean) => ({
+    ref: REF, title: 'Item 7', status: 'In progress',
+    checklist: [
+      { text: 'first', checked: first, heading: 'Acceptance' },
+      { text: 'second', checked: true, heading: 'Acceptance' },
+    ],
+  })
+  const withCheck = () =>
+    makeProvider({
+      getItem: vi.fn().mockResolvedValue(item(false)),
+      check: vi.fn().mockResolvedValue(item(true)),
+    })
+  const opts = { dryRun: false, logWrite: () => {} }
+  const one = [{ text: 'first', checked: true }]
+
+  it('is advertised with exactly the arguments the handler accepts', () => {
+    const tool = TOOLS.find((t) => t.name === 'item_check')
+    expect(tool).toBeDefined()
+    expect(Object.keys(tool!.inputSchema.properties)).toEqual(['ref', 'entries'])
+    expect(tool!.inputSchema.required).toEqual(['ref', 'entries'])
+  })
+
+  it('refuses a bare issue number', async () => {
+    await expect(dispatch(withCheck(), 'item_check', { ref: 7, entries: one }, opts)).rejects.toThrow(BareRefError)
+  })
+
+  it('refuses a missing ref', async () => {
+    await expect(dispatch(withCheck(), 'item_check', { entries: one }, opts)).rejects.toThrow(InvalidArgumentError)
+  })
+
+  it.each([
+    ['entries that are not an array', 'first'],
+    ['missing entries', undefined],
+    ['an empty entries array', []],
+    ['an element that is not an object', ['first']],
+    ['a null element', [null]],
+    ['an element missing checked', [{ text: 'a' }]],
+    ['a non-boolean checked', [{ text: 'a', checked: 'yes' }]],
+    ['an element missing text', [{ checked: true }]],
+    ['a blank text', [{ text: '  ', checked: true }]],
+  ])('refuses %s, and writes nothing', async (_label, entries) => {
+    const provider = withCheck()
+    await expect(
+      dispatch(provider, 'item_check', { ref: 'acme/web#7', entries }, opts),
+    ).rejects.toThrow(InvalidArgumentError)
+    expect(provider.check).not.toHaveBeenCalled()
+  })
+
+  it('hands the provider the ref and only the text and state of each entry', async () => {
+    const provider = withCheck()
+    await dispatch(
+      provider, 'item_check',
+      { ref: 'acme/web#7', entries: [{ text: 'first', checked: true, heading: 'Acceptance' }] },
+      opts,
+    )
+    expect(provider.check).toHaveBeenCalledWith(REF, [{ text: 'first', checked: true }])
+  })
+
+  it('returns what the provider read back', async () => {
+    const result = await dispatch(withCheck(), 'item_check', { ref: 'acme/web#7', entries: one }, opts)
+    expect(textOf(result)).toEqual(item(true))
+  })
+
+  it('logs one line carrying the before and after counts', async () => {
+    const lines: string[] = []
+    await dispatch(withCheck(), 'item_check', { ref: 'acme/web#7', entries: one }, {
+      ...opts, logWrite: (l) => lines.push(l),
+    })
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      ref: 'acme/web#7', field: 'Checklist', before: '1 of 2', after: '2 of 2', dryRun: false,
+    })
+  })
+
+  it('reports by name when the provider cannot do checklists', async () => {
+    const error = await dispatch(makeProvider(), 'item_check', { ref: 'acme/web#7', entries: one }, opts)
+      .catch((e: Error) => e)
+    expect(error).toBeInstanceOf(ChecklistUnsupportedError)
+    expect((error as Error).message).toMatch(/Nothing was written/)
+  })
+
+  // A malformed call is reported as malformed, not as unsupported.
+  it('validates the arguments before checking the capability', async () => {
+    await expect(dispatch(makeProvider(), 'item_check', { ref: 7, entries: one }, opts)).rejects.toThrow(BareRefError)
+    await expect(
+      dispatch(makeProvider(), 'item_check', { ref: 'acme/web#7', entries: [] }, opts),
+    ).rejects.toThrow(InvalidArgumentError)
+  })
+
+  it('marks a dry run, in the result and in the log line', async () => {
+    const lines: string[] = []
+    const result = await dispatch(withCheck(), 'item_check', { ref: 'acme/web#7', entries: one }, {
+      dryRun: true, logWrite: (l) => lines.push(l),
+    })
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBe(true)
+    expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+
+  it('leaves a real result unmarked', async () => {
+    const result = await dispatch(withCheck(), 'item_check', { ref: 'acme/web#7', entries: one }, opts)
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBeUndefined()
   })
 })

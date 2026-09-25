@@ -29,11 +29,18 @@ const EPIC = { owner: 'acme', repo: 'web', number: 1 }
 // Every issue the create path's fake has filed, counted at the mutation itself — so a refusal
 // that let CREATE_ISSUE through and failed afterwards still shows up as one created.
 let created = 0
+// An item whose body carries a task list, for the checklist block. Two entries unticked, because
+// the block ticks one and then needs another to attempt a refused batch with.
+const CHECKLIST = { owner: 'acme', repo: 'web', number: 40 }
 const nodes = [
   issue('web', 1),
   issue('web', 278, EPIC),
   issue('api', 278, EPIC),
   issue('web', 12),
+  {
+    ...issue('web', 40),
+    body: '## Acceptance\n\n- [ ] first criterion\n- [x] second criterion\n- [ ] third criterion\n',
+  },
 ]
 
 // Rooted at repositoryOwner, matching BOARD_QUERY: it resolves a user account and an
@@ -80,6 +87,12 @@ const client = {
         },
       } as any)
       return { createIssue: { issue: { id: `I-web-${number}`, number } } }
+    }
+    // UPDATE_ISSUE_BODY: the checklist write. Rewrites the body a later read reports.
+    if (query.includes('updateIssue(')) {
+      const node = nodes.find((n) => nodeId(n) === variables.issue)!
+      ;(node as any).body = variables.body
+      return { updateIssue: { issue: { id: variables.issue } } }
     }
     if (query.includes('addProjectV2ItemById')) {
       const node = nodes.find((n) => nodeId(n) === variables.content)!
@@ -161,7 +174,7 @@ const client = {
           id: `I-${node.content.repository.name}-${node.content.number}`,
           number: node.content.number,
           title: node.content.title,
-          body: '',
+          body: (node as any).body ?? '',
           state: node.content.state,
           parent: node.content.parent,
           blockedBy: { pageInfo: { hasNextPage: false }, nodes: (node as any).blockedBy ?? [] },
@@ -183,5 +196,9 @@ const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 describeBoardProvider(
   'GitHubBoardProvider',
   async () => new GitHubBoardProvider(client, board, { boardSource: 'repo' }),
-  { epic: EPIC, writes: { owner: 'acme', repo: 'web', issuesCreated: () => created } },
+  {
+    epic: EPIC,
+    writes: { owner: 'acme', repo: 'web', issuesCreated: () => created },
+    checklist: CHECKLIST,
+  },
 )
