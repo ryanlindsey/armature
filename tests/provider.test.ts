@@ -15,8 +15,9 @@ const OPTIONS = [
 // status mutation all read and write one shared `status`, so a second survey reports what the
 // first write actually did. Without that, a cache-invalidation test cannot tell a re-read from
 // a replayed cache.
-function makeClient() {
+function makeClient(initialBody = '') {
   let status = 'Todo'
+  let body = initialBody
   const surveys = { count: 0 }
 
   const boardNodes = () => [
@@ -34,7 +35,11 @@ function makeClient() {
   ]
 
   const client = {
-    graphql: vi.fn(async (query: string) => {
+    graphql: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
+      if (query.includes('updateIssue(')) {
+        body = variables!.body as string
+        return { updateIssue: { issue: { id: 'I_1' } } }
+      }
       if (query.includes('updateProjectV2ItemFieldValue')) {
         status = 'In progress'
         return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_1' } } }
@@ -54,7 +59,7 @@ function makeClient() {
               id: 'I_1',
               number: 5,
               title: 'Item 5',
-              body: '',
+              body,
               state: 'OPEN',
               parent: null,
               projectItems: {
@@ -87,7 +92,12 @@ function makeClient() {
     }),
   }
 
-  return { client: client as unknown as GitHubClient, surveys, currentStatus: () => status }
+  return {
+    client: client as unknown as GitHubClient,
+    surveys,
+    currentStatus: () => status,
+    currentBody: () => body,
+  }
 }
 
 describe('GitHubBoardProvider.survey', () => {
@@ -174,6 +184,48 @@ describe('GitHubBoardProvider invalidates its snapshot after a write', () => {
     await provider.survey()
 
     expect(surveys.count).toBe(surveysBefore + 1)
+  })
+})
+
+// A checklist is not part of BoardSnapshot, so a checklist write cannot stale the cache today.
+// It invalidates anyway, like every other write: cheap to keep, expensive to reintroduce if
+// `checklist` ever reaches the snapshot.
+describe('GitHubBoardProvider.check', () => {
+  it('writes the entry and re-reads the board afterwards', async () => {
+    const { client, surveys, currentBody } = makeClient('- [ ] first\n- [ ] second')
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.survey()
+    const surveysBefore = surveys.count
+    const after = await provider.check!(ref, [{ text: 'first', checked: true }])
+    await provider.survey()
+
+    expect(currentBody()).toBe('- [x] first\n- [ ] second')
+    expect(after.checklist?.[0]).toMatchObject({ text: 'first', checked: true })
+    expect(surveys.count).toBe(surveysBefore + 1)
+  })
+
+  it('re-reads the board even when the write is refused', async () => {
+    const { client, surveys, currentBody } = makeClient('- [ ] first')
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.survey()
+    const surveysBefore = surveys.count
+    await expect(provider.check!(ref, [{ text: 'nope', checked: true }])).rejects.toThrow(/nope/)
+    await provider.survey()
+
+    expect(currentBody()).toBe('- [ ] first')
+    expect(surveys.count).toBe(surveysBefore + 1)
+  })
+
+  it('sends nothing under dry run, and reports the predicted checklist', async () => {
+    const { client, currentBody } = makeClient('- [ ] first')
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo', dryRun: true })
+
+    const after = await provider.check!(ref, [{ text: 'first', checked: true }])
+
+    expect(currentBody()).toBe('- [ ] first')
+    expect(after.checklist?.[0]).toMatchObject({ text: 'first', checked: true })
   })
 })
 

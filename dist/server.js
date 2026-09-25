@@ -17457,6 +17457,68 @@ function parseChecklist(body) {
   }
   return entries;
 }
+var NoSuchEntryError = class extends Error {
+  constructor(ref, text, available) {
+    super(
+      `${formatRef(ref)} has no checklist entry reading exactly "${text}". It has ${available} ${available === 1 ? "entry" : "entries"}. The match is whole-line and exact, on the text after the "- [ ] " marker: copy it from item_get rather than retyping it. Nothing was written.`
+    );
+    this.name = "NoSuchEntryError";
+  }
+};
+var AmbiguousEntryError = class extends Error {
+  constructor(ref, text, lines) {
+    super(
+      `${formatRef(ref)} has ${lines.length} checklist entries reading exactly "${text}", on lines ${lines.join(", ")}. Which was meant cannot be decided here. Edit the issue to make them distinct, then retry. Nothing was written.`
+    );
+    this.name = "AmbiguousEntryError";
+  }
+};
+var ConflictingRequestError = class extends Error {
+  constructor(ref, text) {
+    super(
+      `The request for ${formatRef(ref)} asks for the checklist entry "${text}" to be both ticked and unticked. Which was meant cannot be decided here. Send each entry once, then retry. Nothing was written.`
+    );
+    this.name = "ConflictingRequestError";
+  }
+};
+function applyChecks(ref, body, requests) {
+  const parts = body.split(/(\r?\n)/);
+  const mask = checklistMask(body, parts.filter((_, i) => i % 2 === 0));
+  const index = /* @__PURE__ */ new Map();
+  let total = 0;
+  for (let i = 0; i < parts.length; i += 2) {
+    const line = i / 2;
+    if (mask[line]) continue;
+    const entry = ENTRY.exec(unindent(parts[i]));
+    if (!entry) continue;
+    const text = entry[2].trim();
+    index.set(text, [...index.get(text) ?? [], line]);
+    total += 1;
+  }
+  const targets = /* @__PURE__ */ new Map();
+  for (const request of requests) {
+    const found = index.get(request.text);
+    if (!found) throw new NoSuchEntryError(ref, request.text, total);
+    if (found.length > 1) {
+      throw new AmbiguousEntryError(ref, request.text, found.map((line2) => line2 + 1));
+    }
+    const line = found[0];
+    if (targets.has(line) && targets.get(line) !== request.checked) {
+      throw new ConflictingRequestError(ref, request.text);
+    }
+    targets.set(line, request.checked);
+  }
+  const out = [...parts];
+  let changed = 0;
+  for (const [line, checked] of targets) {
+    const before = out[line * 2];
+    const current = /\[([ xX])\]/.exec(before)[1] !== " ";
+    if (current === checked) continue;
+    out[line * 2] = before.replace(/\[[ xX]\]/, checked ? "[x]" : "[ ]");
+    changed += 1;
+  }
+  return { body: out.join(""), changed };
+}
 
 // server/providers/github/items.ts
 var NotOnBoardError = class extends Error {
@@ -17541,9 +17603,14 @@ var StaleItemError = class extends Error {
   }
 };
 var UnverifiedWriteError = class extends Error {
-  constructor(ref, intended, observed) {
+  /**
+   * `advice` replaces the closing sentence, for a write whose target is not a board field. "Treat
+   * the board as unchanged" is right for a status, where the read-back is the whole truth, and
+   * wrong for an issue body, which a write may have rewritten even when the read-back disagrees.
+   */
+  constructor(ref, intended, observed, advice = "Treat the board as unchanged and investigate before retrying.") {
     super(
-      `Set ${formatRef(ref)} to "${intended}" but reading it back shows "${observed ?? "unset"}". Treat the board as unchanged and investigate before retrying.`
+      `Set ${formatRef(ref)} to "${intended}" but reading it back shows "${observed ?? "unset"}". ` + advice
     );
     this.name = "UnverifiedWriteError";
   }
@@ -17553,6 +17620,10 @@ mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){
   updateProjectV2ItemFieldValue(input:{
     projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}
   }){ projectV2Item { id } }
+}`;
+var UPDATE_ISSUE_BODY = `
+mutation($issue:ID!,$body:String!){
+  updateIssue(input:{id:$issue,body:$body}){ issue{ id } }
 }`;
 async function setStatus(client, board, snapshot, ref, status, options = {}) {
   const read = options.read ?? ((r) => getItem(client, board, r));
@@ -17592,6 +17663,27 @@ async function claim2(client, board, snapshot, ref, options = {}) {
     dryRun: options.dryRun,
     read: options.read
   });
+}
+async function checkEntries(client, board, ref, requests, options = {}) {
+  const read = options.read ?? ((r) => getItem(client, board, r));
+  const before = await read(ref);
+  const { body, changed } = applyChecks(ref, before.body, requests);
+  if (options.dryRun) return { ...before, body, checklist: parseChecklist(body) };
+  if (changed > 0) await client.graphql(UPDATE_ISSUE_BODY, { issue: before.id, body });
+  const after = await read(ref);
+  const box = (checked) => checked ? "[x]" : "[ ]";
+  for (const request of requests) {
+    const entry = after.checklist.find((e) => e.text === request.text);
+    if (!entry || entry.checked !== request.checked) {
+      throw new UnverifiedWriteError(
+        ref,
+        `${box(request.checked)} ${request.text}`,
+        entry ? `${box(entry.checked)} ${entry.text}` : `no entry "${request.text}"`,
+        `The body ${changed > 0 ? "was sent, and may or may not have landed" : "was not rewritten"}. Run item_get on ${formatRef(ref)} to see its checklist as it stands before retrying.`
+      );
+    }
+  }
+  return after;
 }
 var OrphanedIssueError = class extends Error {
   constructor(ref, cause) {
@@ -17864,6 +17956,16 @@ var GitHubBoardProvider = class {
     const snapshot = await this.survey();
     try {
       return await setStatus(this.client, this.board, snapshot, ref, status, { dryRun: this.dryRun });
+    } finally {
+      this.invalidate();
+    }
+  }
+  // A checklist is not part of BoardSnapshot, so this write cannot stale the cache today. It
+  // invalidates anyway, in a `finally` like every other write: the rule is cheap to keep and
+  // expensive to reintroduce if `checklist` ever reaches the snapshot.
+  async check(ref, entries) {
+    try {
+      return await checkEntries(this.client, this.board, ref, entries, { dryRun: this.dryRun });
     } finally {
       this.invalidate();
     }

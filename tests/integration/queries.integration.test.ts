@@ -4,7 +4,13 @@ import { REPO_BOARDS_QUERY } from '../../server/config-io.js'
 import { BOARD_QUERY } from '../../server/providers/github/board.js'
 import { EPIC_ENRICHMENT } from '../../server/providers/github/epic.js'
 import { GitHubClient } from '../../server/providers/github/client.js'
-import { ADD_BLOCKED_BY, ADD_SUB_ISSUE, ITEM_QUERY, PARENT_ID } from '../../server/providers/github/items.js'
+import {
+  ADD_BLOCKED_BY,
+  ADD_SUB_ISSUE,
+  ITEM_QUERY,
+  PARENT_ID,
+  UPDATE_ISSUE_BODY,
+} from '../../server/providers/github/items.js'
 
 // ---------------------------------------------------------------------------------------------
 // The test that would have caught the shipped `owner{ login }`.
@@ -137,6 +143,23 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
       .then(() => null)
       .catch((e: Error) => e)
     expect(error, 'a mutation on unresolvable ids must not succeed').not.toBeNull()
+    expect(error!.message).toMatch(/could not resolve to a node/i)
+    expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
+  })
+
+  // Checked exactly as ADD_SUB_ISSUE is: GraphQL validates a document in full before executing
+  // any of it, so a request that reaches execution has proved its field and argument names
+  // against the live schema. An unresolvable id stops it before it could rewrite anybody's issue
+  // body.
+  it('accepts UPDATE_ISSUE_BODY against the live schema, without writing anything', async () => {
+    const unresolvable = 'I_kwDOAAAAAAAAAAAAAAAAAA'
+
+    const error = await (await client())
+      .graphql<any>(UPDATE_ISSUE_BODY, { issue: unresolvable, body: 'unused' })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(error, 'a mutation on an unresolvable id must not succeed').not.toBeNull()
     expect(error!.message).toMatch(/could not resolve to a node/i)
     expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
   })

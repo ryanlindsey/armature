@@ -136,4 +136,13 @@ export interface BoardProvider {
    * that is actually in flight. Declining is the correct answer.
    */
   epic?(ref: WorkItemRef): Promise<EpicSurvey>
+  /**
+   * Set the state of entries on the item's checklist.
+   *
+   * Optional, unlike every other write. A checklist embedded in Markdown prose is a GFM shape;
+   * an adapter for a tracker without one should decline to implement this rather than implement
+   * and throw. This differs from CreateInput.parent, which models a relation most trackers have
+   * and so is a field an adapter must honour or refuse. dispatch reports the absence by name.
+   */
+  check?(ref: WorkItemRef, entries: ChecklistRequest[]): Promise<BoardItem>
 }
