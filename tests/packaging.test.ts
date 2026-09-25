@@ -486,3 +486,114 @@ describe('the README surfaces the Superpowers relationship above the fold', () =
     expect(section(readme, 'Skill')).not.toContain('github.com/obra/superpowers')
   })
 })
+
+// A drive-by pull request meets a committed bundle, prose-asserting tests and a version in six
+// places, and each one fails CI with no explanation attached (ryanlindsey/armature#35). The rules
+// already live in AGENTS.md; CONTRIBUTING's job is to point there before CI does, not to become a
+// second copy that drifts from the first.
+describe('a contributor can find the rules before CI teaches them', () => {
+  const exists = (p: string) => {
+    try {
+      readText(p)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  describe('CONTRIBUTING.md', () => {
+    const contributing = exists('CONTRIBUTING.md') ? readText('CONTRIBUTING.md') : ''
+
+    it('exists', () => {
+      expect(exists('CONTRIBUTING.md')).toBe(true)
+    })
+
+    it('links AGENTS.md for the invariants', () => {
+      expect(contributing).toMatch(/\]\(\.\/AGENTS\.md[#)]/)
+    })
+
+    // The same guard the CLAUDE.md → AGENTS.md import exists for: one statement, not two.
+    it('points at AGENTS.md rather than restating it', () => {
+      const agents = readText('AGENTS.md')
+      const headings = [...agents.matchAll(/^## .+$/gm)].map((m) => m[0])
+      expect(headings.length).toBeGreaterThan(0)
+      for (const heading of headings) expect(contributing).not.toContain(heading)
+    })
+
+    it('names the committed bundle and the rebuild it needs', () => {
+      expect(contributing).toContain('dist/server.js')
+      expect(contributing).toContain('npm run build')
+      expect(contributing).toContain('git diff --exit-code dist/server.js')
+    })
+
+    it('names the prose-asserting tests and says to run them after doc edits', () => {
+      expect(contributing).toContain('tests/packaging.test.ts')
+      expect(contributing).toMatch(/npm test[^\n]*doc|doc[^\n]*npm test/i)
+    })
+
+    it('sends a contributor to the follow-ups before "fixing" a deliberate gap', () => {
+      expect(contributing).toMatch(/\]\(\.\/docs\/superpowers\/follow-ups\.md\)/)
+      expect(contributing).toContain('parseEpicFromBody')
+    })
+
+    // Squash-merged, so the title is the commit release-please reads. An untyped title ships
+    // nothing and says nothing about why.
+    it('explains that the PR title is a Conventional Commit release-please reads', () => {
+      expect(contributing).toMatch(/Conventional Commit/)
+      expect(contributing).toMatch(/release-please/)
+      expect(contributing).toMatch(/title/i)
+    })
+
+    it('says how to claim an issue', () => {
+      expect(contributing).toMatch(/claim/i)
+    })
+  })
+
+  it('carries the Contributor Covenant as its code of conduct', () => {
+    expect(exists('CODE_OF_CONDUCT.md')).toBe(true)
+    expect(readText('CODE_OF_CONDUCT.md')).toMatch(/Contributor Covenant/)
+  })
+
+  // The maintainer cannot install most harnesses, so the evidence stands in for verification
+  // (ryanlindsey/armature#30). A template that asks for less than the epic does is a PR that
+  // arrives unmergeable.
+  describe('the pull request template', () => {
+    const template = exists('.github/PULL_REQUEST_TEMPLATE.md')
+      ? readText('.github/PULL_REQUEST_TEMPLATE.md')
+      : ''
+
+    it('exists', () => {
+      expect(exists('.github/PULL_REQUEST_TEMPLATE.md')).toBe(true)
+    })
+
+    it('asks for a closing reference in owner/repo#number form', () => {
+      expect(template).toMatch(/Closes ryanlindsey\/armature#/)
+    })
+
+    it('demands all three harness-port evidence items', () => {
+      expect(template).toContain('scripts/conformance')
+      expect(template).toContain('tests/<harness>/')
+      expect(template).toMatch(/install command/i)
+      expect(template).toMatch(/harness version/i)
+    })
+  })
+
+  describe('the issue templates', () => {
+    for (const file of ['bug_report.md', 'feature_request.md', 'harness_support.md', 'config.yml']) {
+      it(`include ${file}`, () => {
+        expect(exists(`.github/ISSUE_TEMPLATE/${file}`)).toBe(true)
+      })
+    }
+
+    // A template whose frontmatter GitHub cannot read is silently dropped from the chooser.
+    for (const file of ['bug_report.md', 'feature_request.md', 'harness_support.md']) {
+      it(`gives ${file} the name and about GitHub needs to list it`, () => {
+        const fm = exists(`.github/ISSUE_TEMPLATE/${file}`)
+          ? frontmatter(readText(`.github/ISSUE_TEMPLATE/${file}`))
+          : ''
+        expect(fm).toMatch(/^name: .+$/m)
+        expect(fm).toMatch(/^about: .+$/m)
+      })
+    }
+  })
+})
