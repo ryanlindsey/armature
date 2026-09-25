@@ -112,6 +112,9 @@ describe('codeMask', () => {
       false, false, false,
     ])
   })
+  it('does not mask HTML comments, which are a parseChecklist concern', () => {
+    expect(codeMask(['<!--', '- [ ] x', '-->'].join('\n'))).toEqual([false, false, false])
+  })
 })
 
 describe('parseChecklist', () => {
@@ -174,5 +177,63 @@ describe('parseChecklist', () => {
 
   it('returns an empty list for a body with no checklist', () => {
     expect(parseChecklist('just prose\n\n## Heading\n\nmore prose')).toEqual([])
+  })
+  it('counts only ASCII spaces and tabs as indentation before the marker', () => {
+    expect(parseChecklist(' - [ ] y')).toEqual([])
+    expect(parseChecklist('　- [ ] y\n * [x] z')).toEqual([])
+    expect(parseChecklist('   - [ ] three\n \t- [ ] tab')).toEqual([
+      { text: 'three', checked: false, heading: null },
+    ])
+  })
+
+  it('does not take a heading from a line led by non-ASCII whitespace', () => {
+    expect(parseChecklist('## Real\n ## Fake\n- [ ] a')[0]!.heading).toBe('Real')
+  })
+
+  it('ignores entries inside a single-line HTML comment block', () => {
+    expect(parseChecklist('<!-- - [ ] hidden -->\n- [ ] real').map((e) => e.text)).toEqual(['real'])
+  })
+
+  it('ignores entries inside a multi-line HTML comment, closer line included', () => {
+    const body = ['- [ ] before', '<!--', '- [ ] sample', '* [x] sample two', '--> - [ ] tail', '- [ ] after']
+    expect(parseChecklist(body.join('\n')).map((e) => e.text)).toEqual(['before', 'after'])
+  })
+
+  it('ignores entries after a comment that never closes', () => {
+    expect(parseChecklist('- [ ] real\n<!--\n- [ ] sample').map((e) => e.text)).toEqual(['real'])
+  })
+
+  it('reads an entry that carries a trailing comment of its own', () => {
+    expect(parseChecklist('- [ ] real <!-- why -->\n- [ ] next').map((e) => e.text)).toEqual([
+      'real <!-- why -->',
+      'next',
+    ])
+  })
+
+  it('masks the lines after an entry that opens a comment it does not close', () => {
+    expect(parseChecklist('- [ ] real <!--\n- [ ] sample\n-->\n- [ ] after').map((e) => e.text)).toEqual([
+      'real <!--',
+      'after',
+    ])
+  })
+
+  it('does not take a heading from inside an HTML comment', () => {
+    const body = ['## Real', '<!--', '## Sample', '-->', '- [ ] a'].join('\n')
+    expect(parseChecklist(body)[0]!.heading).toBe('Real')
+  })
+
+  it('treats a comment opener inside code as code, not as a comment', () => {
+    const body = ['```', '<!--', '```', '- [ ] after', '    <!--', '- [ ] also'].join('\n')
+    expect(parseChecklist(body).map((e) => e.text)).toEqual(['after', 'also'])
+  })
+
+  it('treats a comment closer inside code as code, leaving the comment open', () => {
+    const body = ['<!--', '```', '-->', '```', '- [ ] sample'].join('\n')
+    expect(parseChecklist(body)).toEqual([])
+  })
+
+  it('reads an entry after a comment closes, and after two comments on one line', () => {
+    const body = ['<!-- a --> <!-- b', '- [ ] sample', 'c -->', '- [ ] after'].join('\n')
+    expect(parseChecklist(body).map((e) => e.text)).toEqual(['after'])
   })
 })

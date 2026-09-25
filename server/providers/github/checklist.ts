@@ -72,24 +72,62 @@ const ENTRY = /^[-*+][ \t]+\[([ xX])\][ \t]+(.+)$/
 // An optional closing sequence must be preceded by whitespace, as in GFM: `## C#` is "C#".
 const HEADING = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/
 
-// Every task-list entry outside code, with the nearest preceding ATX heading as context.
+// Leading indentation, removed before matching ENTRY or HEADING. ASCII spaces and tabs only, never
+// trim(): trim() also strips a no-break space or an ideographic space, and GitHub renders
+// `\u00a0- [ ] y` as text, not a task. Anything that deep in indentation codeMask already masked.
+function unindent(rawLine: string): string {
+  return rawLine.replace(/^[ \t]+/, '')
+}
+
+// One boolean per line, true when the line is code (see codeMask) or starts inside an HTML
+// comment. Issue templates hide sample checklists in `<!-- -->`, which GitHub does not render, so
+// an entry there is not a task and must never be written.
+//
+// Kept here rather than in codeMask so stripCodeBlocks and parseEpicFromBody are unchanged. A
+// comment opener inside code is code, not a comment, so code lines are never scanned.
+//
+// Conservative in the same direction as codeMask: any `<!--` outside code opens a comment until
+// the next `-->`, even one GFM would read as literal text (inside an inline code span, say). A
+// line is masked when it *starts* inside a comment, which covers the closer's line — text after
+// `-->` there is still part of the HTML block. An entry that opens a comment after its own text
+// is still an entry: its box comes before the comment.
+function checklistMask(body: string, lines: string[]): boolean[] {
+  const code = codeMask(body)
+  let inComment = false
+
+  return lines.map((line, i) => {
+    if (code[i]) return true
+    const masked = inComment
+    let at = 0
+    for (;;) {
+      const next = inComment ? line.indexOf('-->', at) : line.indexOf('<!--', at)
+      if (next < 0) break
+      at = next + (inComment ? 3 : 4)
+      inComment = !inComment
+    }
+    return masked
+  })
+}
+
+// Every task-list entry outside code and HTML comments, with the nearest preceding ATX heading as
+// context.
 //
 // The heading is reported, never interpreted: which heading means "acceptance" is the caller's
 // judgment, and parseEpicFromBody is the record of what happens when the server reads intent
-// out of prose. A heading inside code is not a heading, so the mask applies to both.
+// out of prose. A heading inside code or a comment is not a heading, so the mask applies to both.
 //
 // Deliberately narrower than GFM: ATX headings only (not setext), `-`/`*`/`+` bullets only (not
-// ordered or blockquoted tasks), HTML comments not masked, and a nested task indented four or
-// more spaces is masked as code. See docs/superpowers/follow-ups.md.
+// ordered or blockquoted tasks), and a nested task indented four or more columns is masked as
+// code. See docs/superpowers/follow-ups.md.
 export function parseChecklist(body: string): ChecklistEntry[] {
   const lines = body.split(/\r?\n/)
-  const mask = codeMask(body)
+  const mask = checklistMask(body, lines)
   const entries: ChecklistEntry[] = []
   let heading: string | null = null
 
   for (const [i, rawLine] of lines.entries()) {
     if (mask[i]) continue
-    const line = rawLine.trim()
+    const line = unindent(rawLine)
 
     const head = HEADING.exec(line)
     if (head) {

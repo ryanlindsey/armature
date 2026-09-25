@@ -17420,14 +17420,33 @@ function fenceRun(text, char) {
 }
 var ENTRY = /^[-*+][ \t]+\[([ xX])\][ \t]+(.+)$/;
 var HEADING = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/;
+function unindent(rawLine) {
+  return rawLine.replace(/^[ \t]+/, "");
+}
+function checklistMask(body, lines) {
+  const code = codeMask(body);
+  let inComment = false;
+  return lines.map((line, i) => {
+    if (code[i]) return true;
+    const masked = inComment;
+    let at = 0;
+    for (; ; ) {
+      const next = inComment ? line.indexOf("-->", at) : line.indexOf("<!--", at);
+      if (next < 0) break;
+      at = next + (inComment ? 3 : 4);
+      inComment = !inComment;
+    }
+    return masked;
+  });
+}
 function parseChecklist(body) {
   const lines = body.split(/\r?\n/);
-  const mask = codeMask(body);
+  const mask = checklistMask(body, lines);
   const entries = [];
   let heading = null;
   for (const [i, rawLine] of lines.entries()) {
     if (mask[i]) continue;
-    const line = rawLine.trim();
+    const line = unindent(rawLine);
     const head = HEADING.exec(line);
     if (head) {
       heading = head[1].trim();
