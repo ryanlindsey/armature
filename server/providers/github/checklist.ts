@@ -66,15 +66,21 @@ function fenceRun(text: string, char: '`' | '~'): number {
   return n
 }
 
-const ENTRY = /^[-*+]\s+\[([ xX])\]\s+(.+)$/
+// Space or tab only, as in GFM — `\s` would also admit a no-break space GitHub does not render
+// as a task, and a later byte-exact write must agree with GitHub about which lines are tasks.
+const ENTRY = /^[-*+][ \t]+\[([ xX])\][ \t]+(.+)$/
 // An optional closing sequence must be preceded by whitespace, as in GFM: `## C#` is "C#".
-const HEADING = /^#{1,6}\s+(.+?)(?:\s+#+)?\s*$/
+const HEADING = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/
 
 // Every task-list entry outside code, with the nearest preceding ATX heading as context.
 //
 // The heading is reported, never interpreted: which heading means "acceptance" is the caller's
 // judgment, and parseEpicFromBody is the record of what happens when the server reads intent
 // out of prose. A heading inside code is not a heading, so the mask applies to both.
+//
+// Deliberately narrower than GFM: ATX headings only (not setext), `-`/`*`/`+` bullets only (not
+// ordered or blockquoted tasks), HTML comments not masked, and a nested task indented four or
+// more spaces is masked as code. See docs/superpowers/follow-ups.md.
 export function parseChecklist(body: string): ChecklistEntry[] {
   const lines = body.split(/\r?\n/)
   const mask = codeMask(body)

@@ -134,8 +134,19 @@ describe('parseChecklist', () => {
     expect(parseChecklist(body).map((e) => e.text)).toEqual(['real'])
   })
 
+  // After a paragraph, four spaces are indented code. After a list item, GFM would instead read
+  // a nested item, which codeMask conservatively masks too; see docs/superpowers/follow-ups.md.
   it('ignores entries inside indented code', () => {
-    expect(parseChecklist('- [ ] real\n\n    - [ ] sample')).toHaveLength(1)
+    expect(parseChecklist('- [ ] real\n\nprose\n\n    - [ ] sample').map((e) => e.text)).toEqual(['real'])
+  })
+
+  it('does not let an indented fence swallow the entries after it', () => {
+    const body = ['    ```', '- [ ] after'].join('\n')
+    expect(parseChecklist(body).map((e) => e.text)).toEqual(['after'])
+  })
+
+  it('requires a space or tab after the marker, as GFM does', () => {
+    expect(parseChecklist('-\u00a0[ ] nbsp\n- [ ]\u00a0nbsp')).toEqual([])
   })
 
   it('attributes each entry to its nearest preceding heading', () => {

@@ -82,6 +82,13 @@ Code is correct in all four; only the tests are missing or misplaced.
 - **`inferStatusSemantics` ties.** Same-category matches resolve first-wins with no comment and no
   signal that a second candidate was discarded. Defensible, since option order mirrors board
   column order.
+- **`parseChecklist` is narrower than GFM.** It misses entries rather than invent them, which
+  leaves a box unreadable and unflippable but never writes into text GitHub does not render as a
+  task. Four gaps: a nested task indented four or more spaces (or a tab) is masked as indented
+  code, because `codeMask` is not list-aware; entries inside `<!-- -->` comments are *reported*,
+  the one gap pointing the risky way, since issue templates hide sample checklists there; ordered
+  (`1. [ ]`) and blockquoted (`> - [ ]`) tasks are not read; and setext or empty ATX headings are
+  not recognised as headings.
 - **`GraphQLError` is never asserted by class** — `client.test.ts` matches message text only.
 - **`ResolvedConfig.verify`** is parsed and never read server-side. The skill reads
   `.armature.json` itself, so this is harmless; either expose it through a tool or drop the field.

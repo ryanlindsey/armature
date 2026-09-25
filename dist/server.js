@@ -17418,8 +17418,8 @@ function fenceRun(text, char) {
   while (text[n] === char) n++;
   return n;
 }
-var ENTRY = /^[-*+]\s+\[([ xX])\]\s+(.+)$/;
-var HEADING = /^#{1,6}\s+(.+?)(?:\s+#+)?\s*$/;
+var ENTRY = /^[-*+][ \t]+\[([ xX])\][ \t]+(.+)$/;
+var HEADING = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/;
 function parseChecklist(body) {
   const lines = body.split(/\r?\n/);
   const mask = codeMask(body);
