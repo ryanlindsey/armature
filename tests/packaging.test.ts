@@ -262,7 +262,10 @@ describe('the commands declare the tools they actually use', () => {
   // not reach the children anyway: a command's allowed-tools are not inherited by subagents.
   it('/armature-epic declares nothing the controller is forbidden to do', () => {
     const fm = frontmatter(readText('commands/armature-epic.md'))
-    const tools = /^allowed-tools:(.*)$/m.exec(fm)?.[1] ?? ''
+    const line = /^allowed-tools:(.*)$/m.exec(fm)
+    expect(line, 'expected allowed-tools on one line, or this check proves nothing').not.toBeNull()
+    const tools = line![1]!
+    expect(tools).toMatch(/\bAgent\b/)
     expect(tools).not.toMatch(/\b(Read|Edit|Write|Grep|Glob|EnterWorktree)\b/)
     expect(tools).not.toMatch(/Bash\(/)
   })
@@ -306,13 +309,7 @@ describe('/armature-next separates the ref from the human\'s instructions', () =
 // instructions — "no worktree" is the one working-an-epic settles once for the whole run. Only the
 // ref may reach epic_survey, and which epic to work is never the command's to choose.
 describe('/armature-epic takes an epic and the human\'s instructions', () => {
-  const command = (() => {
-    try {
-      return readText('commands/armature-epic.md')
-    } catch {
-      return ''
-    }
-  })()
+  const command = readText('commands/armature-epic.md')
   const body = command.replace(/^---\n[\s\S]*?\n---/, '')
 
   it('advertises the epic and the instructions in its argument hint', () => {
@@ -650,10 +647,18 @@ describe('the README documents the epic run alongside the single-item one', () =
 
   it('names the three reasons the run stops, and that running out of work is not one', () => {
     const epic = section(readme, 'Working a whole epic')
-    expect(epic).toMatch(/collision/i)
-    expect(epic).toMatch(/review/i)
-    expect(epic).toMatch(/verify/i)
+    expect(epic).toMatch(/stops for three things[^.]*collision[^.]*review[^.]*verify/i)
     expect(epic).toMatch(/needs a person/i)
+    expect(epic).toMatch(/not a failure/i)
+  })
+
+  // GitHub retargets a dependent PR only when its merged base branch is deleted, and a squash
+  // merge leaves the next PR carrying commits main no longer has. "Merge bottom-up" alone walks a
+  // squash-merging owner into a conflict at the second PR.
+  it('says how to merge the stack without the second PR going wrong', () => {
+    const epic = section(readme, 'Working a whole epic')
+    expect(epic).toMatch(/delete[^.]*branch[^.]*retarget/i)
+    expect(epic).toMatch(/squash[^.]*rebase/i)
   })
 
   it('lists the command and the skill where the others are listed', () => {

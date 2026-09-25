@@ -71,23 +71,26 @@ run, with a plain feature branch, a hand-written failing test, a re-read of the 
 order, without stopping between them:
 
 ```
-/armature-epic ryanlindsey/armature#51
+/armature-epic acme/web#10
 
-  52  claim → worktree → TDD → review → PR #A → main
-  53  claim → worktree(base issue-52) → … → PR #B → issue-52
-  54  claim → worktree(base issue-53) → … → PR #C → issue-53
+  #11  claim → worktree → TDD → review → PR #A → main
+  #12  claim → worktree(base issue-11-…) → … → PR #B → issue-11-…
+  #13  claim → worktree(base issue-12-…) → … → PR #C → issue-12-…
 
   3 PRs stacked A ← B ← C. Merge bottom-up.
 ```
 
 A child that declares a blocker branches from **that blocker's branch**, not from the default
 branch, so its pull request contains the work it depends on. A child with no blocker branches from
-the default branch and gets an independent PR. Armature never merges the stack — you do, bottom-up,
-and GitHub retargets each pull request as its base lands.
+the default branch and gets an independent PR. Armature never merges the stack — you do, bottom-up.
+Delete each branch as its PR merges, so GitHub retargets the next PR onto the default branch. If you
+squash-merge, rebase the next PR onto the default branch before merging it: it still carries the
+commits the squash replaced.
 
-Each child is worked by its own subagent running the same ten steps as `/armature-next`, so the run
-survives an epic of any length: the controlling session never reads the implementation, and it
-re-reads its place from the board every iteration rather than remembering it.
+Each child is worked by its own subagent running the `/armature-next` loop from step 2 — the
+controller has already chosen the item — so the run survives an epic of any length: the controlling
+session never reads the implementation, and it re-reads its place from the board every iteration
+rather than remembering it.
 
 The run stops for three things and nothing else: a cross-child file collision, a review that cannot
 be satisfied, and a red verify. A child that needs a person is skipped rather than claimed, and when
@@ -97,8 +100,9 @@ work is the run finishing, not a failure.
 Two things to know before a long unattended run:
 
 - **The children's tools need approving at the session level.** A command's `allowed-tools` do not
-  reach the subagents it dispatches, so each child's edits, `npm` and `git` calls prompt unless your
-  permission mode or `settings.json` already allows them.
+  reach the subagents it dispatches, so each child's tools — file edits, `git`, `npm`, `gh pr`, the
+  worktree tool and the armature tools themselves — prompt unless your permission mode or
+  `settings.json` already allows them.
 - **Stacked PRs may not show up on the board.** GitHub links a `Closes #N` only on a PR that
   targets the default branch, so a stacked child's PR is likely invisible to `epic_survey` until
   its base merges. The run keeps its own record of each child's PR to cope, which a resumed session
