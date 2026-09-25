@@ -218,6 +218,7 @@ describe('selectNext never selects a spec or an epic by its title', () => {
       make('web', 6, 'Todo', 'real child', epic.ref),
     ])
     const result = selectNext(s, { epic: epic.ref })
+    expect(result.kind).toBe('item')
     if (result.kind === 'item') expect(result.item.ref.number).toBe(6)
     expect(result.because).toContain('acme/web#5')
   })
