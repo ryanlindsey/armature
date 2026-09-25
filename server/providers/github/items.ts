@@ -1,6 +1,7 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
 import type { BoardItem, BoardSnapshot, CreateInput } from '../types.js'
+import { codeMask } from './checklist.js'
 import { GitHubClient, GraphQLError } from './client.js'
 
 export type ItemDetail = BoardItem & {
@@ -72,29 +73,9 @@ const DECLARATION =
 // a false positive is a silent wrong epic), stripping a superset of true indented code blocks
 // is the safe direction, but it is an approximation, not a claim of full compliance.
 function stripCodeBlocks(body: string): string {
-  const kept: string[] = []
-  let fence: { char: '`' | '~'; len: number } | null = null
-
-  for (const rawLine of body.split(/\r?\n/)) {
-    if (fence) {
-      const closed = new RegExp(`^\\${fence.char}{${fence.len},}$`).test(rawLine.trim())
-      if (closed) fence = null
-      continue // fence content (and the closing delimiter itself) is never a declaration line
-    }
-
-    const open = /^(`{3,}|~{3,})/.exec(rawLine.trimStart())
-    if (open) {
-      const marker = open[1]!
-      fence = { char: marker[0] as '`' | '~', len: marker.length }
-      continue
-    }
-
-    if (/^( {4,}|\t)/.test(rawLine)) continue // indented code — checked before any trimming
-
-    kept.push(rawLine)
-  }
-
-  return kept.join('\n')
+  const lines = body.split(/\r?\n/)
+  const mask = codeMask(body)
+  return lines.filter((_, i) => !mask[i]).join('\n')
 }
 
 function dedupe(refs: WorkItemRef[]): WorkItemRef[] {
