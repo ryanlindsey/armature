@@ -19,7 +19,9 @@ export function codeMask(body: string): boolean[] {
       continue
     }
 
-    const open = /^(`{3,}|~{3,})/.exec(rawLine.trimStart())
+    // At most three leading spaces, as in GFM. Four or more make the line indented code, and
+    // reading it as an opener would mask every line after it — a whole checklist gone quietly.
+    const open = /^ {0,3}(`{3,}|~{3,})/.exec(rawLine)
     if (open) {
       const marker = open[1]!
       fence = { char: marker[0] as '`' | '~', len: marker.length }

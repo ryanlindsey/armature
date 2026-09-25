@@ -17,6 +17,11 @@ describe('codeMask', () => {
     expect(codeMask(body)).toEqual([false, true, true, false])
   })
 
+  it('treats a fence indented four spaces as indented code, not an opener', () => {
+    const body = ['    ```', 'prose'].join('\n')
+    expect(codeMask(body)).toEqual([true, false])
+  })
+
   it('marks to the end of the body when a fence never closes', () => {
     const body = ['prose', '```', 'code', 'still code'].join('\n')
     expect(codeMask(body)).toEqual([false, true, true, true])
