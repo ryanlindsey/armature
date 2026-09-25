@@ -10,8 +10,16 @@ import type { BoardProvider } from '../../server/providers/types.js'
  * `epic` is optional because `BoardProvider.epic` is: an adapter that cannot report linked pull
  * requests declines epics, and its harness passes no epic ref, which skips that block. A harness
  * that does pass one is declaring the adapter supports epics, and the block holds it to that.
+ *
+ * `writes` is optional for the same reason `epic` is: a harness passes it to declare that its
+ * adapter can be driven to create issues here, where `owner/repo` is the repository to create
+ * in and `issuesCreated` counts every issue the backend has created so far — including ones a
+ * failed call left behind, which is exactly what "nothing was created" has to be checked against.
  */
-export type ContractFixture = { epic?: WorkItemRef }
+export type ContractFixture = {
+  epic?: WorkItemRef
+  writes?: { owner: string; repo: string; issuesCreated: () => number }
+}
 
 /**
  * The backend-agnostic guarantees every adapter must satisfy. A Jira adapter's definition of
@@ -187,6 +195,52 @@ export function describeBoardProvider(
         expect(next.kind, 'the fixture epic must have an actionable child').toBe('item')
         expect(survey.next.ref).toEqual(next.kind === 'item' ? next.item.ref : null)
         expect(survey.next.because).toBe(next.because)
+      })
+    })
+
+    describe.skipIf(!fixture.writes)('creating items, if the harness can', () => {
+      const into = fixture.writes!
+      const blockersOf = (item: unknown) => (item as { blockedBy?: WorkItemRef[] }).blockedBy
+
+      it('files a new item in the status it is asked for, and reads it back so', async () => {
+        const provider = await makeProvider()
+        const { semantics } = await provider.survey()
+        const created = await provider.create({
+          owner: into.owner, repo: into.repo, title: 'contract: status', body: '',
+          status: semantics.claimed,
+        })
+        expect((await provider.getItem(created.ref)).status).toBe(semantics.claimed)
+      })
+
+      // The collision the ref type exists for, asked of the write path: two blockers sharing a
+      // number must land as two, each still naming its own repository.
+      it('marks a new item blocked by same-numbered items in two repositories, fully qualified', async () => {
+        const provider = await makeProvider()
+        const snapshot = await provider.survey()
+        const [number, repos] = Object.entries(snapshot.collisions)[0]!
+        const blockers = repos.slice(0, 2).map((full) => {
+          const [owner, repo] = full.split('/')
+          return { owner: owner!, repo: repo!, number: Number(number) }
+        })
+
+        const created = await provider.create({
+          owner: into.owner, repo: into.repo, title: 'contract: blockers', body: '',
+          blockedBy: blockers,
+        })
+        const read = blockersOf(await provider.getItem(created.ref))
+        expect(read, 'getItem must report blockedBy').toBeDefined()
+        expect(read!.map(formatRef).sort()).toEqual(blockers.map(formatRef).sort())
+        for (const ref of read!) expect(() => parseRef(formatRef(ref))).not.toThrow()
+      })
+
+      it('refuses a status the board does not offer, and creates nothing', async () => {
+        const provider = await makeProvider()
+        const before = into.issuesCreated()
+        await expect(provider.create({
+          owner: into.owner, repo: into.repo, title: 'contract: refused', body: '',
+          status: 'No Such Status Anywhere',
+        })).rejects.toThrow(/No Such Status Anywhere/)
+        expect(into.issuesCreated()).toBe(before)
       })
     })
   })
