@@ -28,9 +28,10 @@ ARMATURE_INTEGRATION=1 ARMATURE_IT_OWNER=<owner> ARMATURE_IT_BOARD=<n> ARMATURE_
 
 ## What this is
 
-An agentic engineering harness, packaged as a plugin: an MCP server (`server/`), two slash commands
-(`commands/`), and one skill (`skills/working-the-board/`). It drives GitHub Projects board items
-across many repositories. The server holds **facts and effects**; the skill holds **judgment**
+An agentic engineering harness, packaged as a plugin: an MCP server (`server/`), three slash
+commands (`commands/`), and two skills (`skills/working-the-board/`, and `skills/working-an-epic/`,
+which dispatches the first once per child of an epic). It drives GitHub Projects board items across
+many repositories. The server holds **facts and effects**; the skills hold **judgment**
 (prerequisite checks, "work epics in order", never-merge). Do not move judgment into the server or
 facts into the skill — the split is deliberate and `tests/packaging.test.ts` asserts parts of it.
 
