@@ -56,21 +56,33 @@ this skill.
 - **Never pass a bare issue number.** Every ref is `owner/repo#number`, in `parent`, in
   `blockedBy`, and in the prose `Depends on` line.
 - **Never retry `item_create` after an error that means the issue exists.** Calling again creates
-  a second issue. Each of these names the ref it created and how far it got:
-  - `OrphanedIssueError` — created, but not on the board.
-  - `StatuslessItemError` — on the board, its status unconfirmed.
+  a second issue. What reaches you is the error's message, not its class name, so read the message:
+  one that begins `Created <ref>` means that issue exists. The four such errors, by how far each
+  got (writes run in the order: create, add to board, set status, link parent, add blockers):
+  - `OrphanedIssueError` — created, but not on the board. Status, parent and blockers were not
+    attempted.
+  - `StatuslessItemError` — on the board, its status unconfirmed. Parent and blockers were not
+    attempted, and its message does not say so.
   - `UnlinkedItemError` — on the board with its status, but not linked to its parent. If you also
     passed `blockedBy`, none of those links was attempted either; the message lists them.
-  - `UnsequencedItemError` — linked, but some blockers unconfirmed; the message names which landed.
+  - `UnsequencedItemError` — status set and parent linked if one was given, but some blockers
+    unconfirmed; the message names which landed.
 
-  Stop, report the error to the human, and apply the repair its message names to the issue it
-  created. Carry on filing only once that issue is whole, since later children may name it.
-- **Some errors mean nothing was created.** `UnknownStatusError` (status names match exactly,
-  including case), `MissingParentError`, `MissingBlockerError`, and an argument refusal such as
-  `BareRefError` or `InvalidArgumentError` are all raised before any write: fix the argument, then
-  call again.
+  Stop and report the error to the human. Only a `StatuslessItemError` can be repaired through
+  armature — set the status with `item_status` — and even then its parent and blockers are still
+  missing. Those, and every other repair, belong to the human: armature has no tool to add an existing
+  issue to the board, set a parent or add a blocker, and you never reach for `gh` to do it. Carry
+  on filing only once the human confirms that issue is whole, since later children may name it.
+- **Some errors mean nothing was created.** A message saying nothing was created —
+  `UnknownStatusError` (status names match exactly, including case), `MissingParentError`,
+  `MissingBlockerError` — or an argument refusal such as `BareRefError` ("is not a work item
+  reference") or `InvalidArgumentError` ("needs … to be") is raised before any write: fix the
+  argument, then call again.
 - **Any other error leaves the outcome unknown.** Do not call again; report it, and let the human
   check whether the issue exists.
+- **A dry run cannot file a whole graph.** Under `ARMATURE_DRY_RUN` a created item has no ref, so
+  nothing after the first `item_create` can name it as `parent` or in `blockedBy`. Predict the
+  first write, report the rest as planned, and stop.
 - **Bodies go through `body` directly.** No scratch files, and never `gh` to read or write the
   board. If the armature tools are unavailable, STOP and say so.
 - **Report what was filed.** End with the spec, the epic if there is one, and each child, as refs,

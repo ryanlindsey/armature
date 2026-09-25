@@ -34,8 +34,8 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    and creates a pull request — by its text, never its number; see the rule below. Title is a
    Conventional Commit. Body contains `Closes #<number>`. **Do not merge.**
 10. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
-    Report the PR link. If the item's parent is titled `Spec:` — a one-task plan, filed with no
-    epic — end the report with: "after this merges, close `<spec ref>`." Then STOP.
+    Report the PR link. If the item's parent — read in step 2 — is titled `Spec:`, a one-task
+    plan filed with no epic, end the report with: "after this merges, close `<spec ref>`." Then STOP.
 
 ## Without Superpowers
 
@@ -62,8 +62,10 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   appealing. Then read the chosen item's body — and its epic's — for a prerequisite it states in
   prose: "Depends on `owner/repo#N`", "blocked by", "after". Run `item_get` on every item named.
   If any of them is not in the board's done status, say which item is waiting on which, and STOP
-  without claiming. The server does not check prerequisites — it reports facts and effects, and
-  "this should wait" is a judgment — so this rule is the only place that check exists.
+  without claiming. An epic or parent titled `Spec:` is a design document: read it for context,
+  not for prerequisites, since its prose describes the whole design rather than this item's order.
+  The server does not check prerequisites — it reports facts and effects, and "this should wait"
+  is a judgment — so this rule is the only place that check exists.
 - **`using-git-worktrees` does not get to ask for consent.** It asks before creating a worktree
   unless a preference is on record, and a missed prompt stalls the whole run. Invoking armature is
   that preference: treat consent as given and do not ask. Name the worktree `issue-<number>-<slug>`.

@@ -154,7 +154,7 @@ The MCP server exposes seven tools:
 
 | tool | does |
 | --- | --- |
-| `board_next` | The next actionable item, with the reason it won — or a blocked explanation. Narrow it with `repo` or `epic`. Never returns an item titled `Spec:` or `Epic:`, and says which it skipped. |
+| `board_next` | The next actionable item, with the reason it won — or a blocked explanation. Narrow it with `repo` or `epic`. Never returns an item titled `Spec:` or `Epic:`, and names the todo items it skipped for that title. |
 | `board_survey` | A normalized snapshot of the whole board: items, repositories, statuses, collisions. |
 | `item_get` | One work item's body, status, and epic (with the repository the epic lives in). |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |

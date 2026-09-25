@@ -817,8 +817,8 @@ describe('the filing skill carries the policies the server does not enforce', ()
 
   it('knows both plan shapes', () => {
     expect(skill).toMatch(/single issue/i)
-    expect(skill).toMatch(/parent: <spec>|parent[^.]*spec/i)
-    expect(skill).toMatch(/parent: <epic>|parent[^.]*epic/i)
+    expect(skill).toMatch(/`parent: <spec>`/)
+    expect(skill).toMatch(/`parent: <epic>`/)
   })
 
   it('files children in dependency order, with blockedBy and the prose line', () => {
