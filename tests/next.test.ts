@@ -163,3 +163,71 @@ describe('selectNext', () => {
     }
   })
 })
+
+describe('selectNext never selects a spec or an epic by its title', () => {
+  it('never chooses a Spec: item in todo, and says it was excluded', () => {
+    const s = snap([
+      make('armature', 75, 'Todo', 'Spec: file specs and plans to the board'),
+      make('armature', 80, 'Todo', 'real work'),
+    ])
+    const result = selectNext(s, {})
+    expect(result.kind).toBe('item')
+    if (result.kind === 'item') expect(result.item.ref.number).toBe(80)
+    expect(result.because).toContain('1 item(s) excluded by a "Spec:" or "Epic:" title: acme/armature#75.')
+  })
+
+  // The window between filing an epic and filing its first child.
+  it('never chooses an Epic: item that has no children yet', () => {
+    const result = selectNext(snap([make('armature', 76, 'Todo', 'Epic: the plan')]), {})
+    expect(result.kind).toBe('blocked')
+  })
+
+  // A null result still explains itself — the prefix may be the very reason nothing was chosen.
+  it('names the prefix-excluded items when nothing is actionable', () => {
+    const result = selectNext(snap([make('armature', 75, 'Todo', 'Spec: x')]), {})
+    expect(result.kind).toBe('blocked')
+    expect(result.because).toContain('acme/armature#75')
+  })
+
+  // An epic with children is dropped by the parent rule already; naming it on every call is noise.
+  it('does not report an Epic: that the parent rule already excludes', () => {
+    const epic = make('armature', 76, 'Todo', 'Epic: the plan')
+    const result = selectNext(snap([epic, make('armature', 77, 'Todo', '01 · work', epic.ref)]), {})
+    expect(result.kind).toBe('item')
+    expect(result.because).not.toMatch(/excluded by/)
+  })
+
+  it('catches odd spacing and case', () => {
+    for (const title of ['spec: x', 'EPIC : x', '  Spec:x']) {
+      expect(selectNext(snap([make('web', 1, 'Todo', title)]), {}).kind, title).toBe('blocked')
+    }
+  })
+
+  // Review Focus 3: a Conventional Commit scope is not a prefix.
+  it('still selects titles that only mention spec or epic', () => {
+    for (const title of ['feat(epic): add x', 'fix(spec): y', 'Update the spec: wording', 'Epic 3 · Telemetry']) {
+      expect(selectNext(snap([make('web', 1, 'Todo', title)]), {}).kind, title).toBe('item')
+    }
+  })
+
+  it('excludes and reports a Spec:-titled child under the epic filter', () => {
+    const epic = make('platform', 10, 'Todo', 'Epic 1 · Foundations')
+    const s = snap([
+      epic,
+      make('web', 5, 'Todo', 'Spec: mis-filed', epic.ref),
+      make('web', 6, 'Todo', 'real child', epic.ref),
+    ])
+    const result = selectNext(s, { epic: epic.ref })
+    expect(result.kind).toBe('item')
+    if (result.kind === 'item') expect(result.item.ref.number).toBe(6)
+    expect(result.because).toContain('acme/web#5')
+  })
+
+  it('lists at most five excluded refs, then says how many more', () => {
+    const specs = [1, 2, 3, 4, 5, 6, 7].map((n) => make('web', n, 'Todo', `Spec: ${n}`))
+    const result = selectNext(snap(specs), {})
+    expect(result.because).toContain('7 item(s) excluded')
+    expect(result.because).toContain('and 2 more.')
+    expect(result.because).not.toContain('acme/web#6')
+  })
+})

@@ -17207,6 +17207,14 @@ async function surveyBoard(client, board, boardSource) {
 
 // server/providers/github/next.ts
 var EPIC_TITLE = /\bEpic\s+(\d+)\b/i;
+var NOT_WORK_TITLE = /^\s*(spec|epic)\s*:/i;
+var SHOWN_EXCLUSIONS = 5;
+function excludedNote(items) {
+  if (items.length === 0) return "";
+  const shown = items.slice(0, SHOWN_EXCLUSIONS).map((i) => formatRef(i.ref)).join(", ");
+  const more = items.length > SHOWN_EXCLUSIONS ? ` and ${items.length - SHOWN_EXCLUSIONS} more` : "";
+  return ` ${items.length} item(s) excluded by a "Spec:" or "Epic:" title: ${shown}${more}.`;
+}
 function epicOrder(title, number3) {
   const match2 = EPIC_TITLE.exec(title);
   return match2 ? Number(match2[1]) : number3;
@@ -17223,7 +17231,10 @@ function selectNext(snapshot, options) {
   const inRepo = repoLower !== void 0 ? children.filter((i) => `${i.ref.owner}/${i.ref.repo}`.toLowerCase() === repoLower) : children;
   const epicKey = options.epic ? key(options.epic).toLowerCase() : void 0;
   const underEpic = epicKey !== void 0 ? inRepo.filter((i) => i.parent !== null && key(i.parent).toLowerCase() === epicKey) : inRepo;
-  const actionable = underEpic.filter((i) => i.status === todo && i.state === "OPEN");
+  const open2 = underEpic.filter((i) => i.status === todo && i.state === "OPEN");
+  const excluded = open2.filter((i) => NOT_WORK_TITLE.test(i.title));
+  const actionable = open2.filter((i) => !NOT_WORK_TITLE.test(i.title));
+  const note = excludedNote(excluded);
   if (actionable.length === 0) {
     if (inRepo.length === 0 && options.repo !== void 0) {
       return {
@@ -17240,7 +17251,7 @@ function selectNext(snapshot, options) {
     const scope = options.repo !== void 0 ? ` in "${options.repo}"` : "";
     return {
       kind: "blocked",
-      because: `Nothing is actionable${scope}: no open item sits in "${todo}". ${underEpic.length} item(s) were considered.`
+      because: `Nothing is actionable${scope}: no open item sits in "${todo}". ${underEpic.length} item(s) were considered.${note}`
     };
   }
   const epicRank = /* @__PURE__ */ new Map();
@@ -17258,7 +17269,7 @@ function selectNext(snapshot, options) {
   return {
     kind: "item",
     item: chosen,
-    because: `${formatRef(chosen.ref)} is ${parentNote}. ${ranked.length - 1} other item(s) queued behind it.`
+    because: `${formatRef(chosen.ref)} is ${parentNote}. ${ranked.length - 1} other item(s) queued behind it.${note}`
   };
 }
 
