@@ -7,6 +7,23 @@ export type NextResult =
 
 const EPIC_TITLE = /\bEpic\s+(\d+)\b/i
 
+// A spec or an epic is never work, whether or not it has children on the board yet. The parent
+// rule in selectNext catches an epic once its first child is filed; this catches the window
+// before that, and a spec, which is filed before its plan exists (ryanlindsey/armature#75).
+// Anchored at the start so a Conventional Commit scope — `feat(epic): …` — is still work.
+const NOT_WORK_TITLE = /^\s*(spec|epic)\s*:/i
+
+const SHOWN_EXCLUSIONS = 5
+
+// Loud, not silent: a real work item whose title happens to start "Spec:" would otherwise never
+// be chosen, and nothing would say so.
+function excludedNote(items: BoardItem[]): string {
+  if (items.length === 0) return ''
+  const shown = items.slice(0, SHOWN_EXCLUSIONS).map((i) => formatRef(i.ref)).join(', ')
+  const more = items.length > SHOWN_EXCLUSIONS ? ` and ${items.length - SHOWN_EXCLUSIONS} more` : ''
+  return ` ${items.length} item(s) excluded by a "Spec:" or "Epic:" title: ${shown}${more}.`
+}
+
 export function epicOrder(title: string, number: number): number {
   const match = EPIC_TITLE.exec(title)
   return match ? Number(match[1]!) : number
@@ -47,7 +64,12 @@ export function selectNext(
       ? inRepo.filter((i) => i.parent !== null && key(i.parent).toLowerCase() === epicKey)
       : inRepo
 
-  const actionable = underEpic.filter((i) => i.status === todo && i.state === 'OPEN')
+  // `underEpic` has already lost every parent, so anything dropped here was dropped for its
+  // title alone — the only exclusions worth reporting.
+  const open = underEpic.filter((i) => i.status === todo && i.state === 'OPEN')
+  const excluded = open.filter((i) => NOT_WORK_TITLE.test(i.title))
+  const actionable = open.filter((i) => !NOT_WORK_TITLE.test(i.title))
+  const note = excludedNote(excluded)
 
   if (actionable.length === 0) {
     if (inRepo.length === 0 && options.repo !== undefined) {
@@ -67,7 +89,7 @@ export function selectNext(
       kind: 'blocked',
       because:
         `Nothing is actionable${scope}: no open item sits in "${todo}". ` +
-        `${underEpic.length} item(s) were considered.`,
+        `${underEpic.length} item(s) were considered.${note}`,
     }
   }
 
@@ -90,6 +112,6 @@ export function selectNext(
   return {
     kind: 'item',
     item: chosen,
-    because: `${formatRef(chosen.ref)} is ${parentNote}. ${ranked.length - 1} other item(s) queued behind it.`,
+    because: `${formatRef(chosen.ref)} is ${parentNote}. ${ranked.length - 1} other item(s) queued behind it.${note}`,
   }
 }
