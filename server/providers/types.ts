@@ -64,6 +64,14 @@ export type CreateInput = {
    * must refuse it for the same reason v1 did rather than accept and drop it.
    */
   parent?: WorkItemRef
+  /** The status to file the new item in, by name. Absent means the board's todo status. */
+  status?: string
+  /**
+   * Items the new one is blocked by, already resolved to references. Written last of every step
+   * and verified by read-back, under the same rule as `parent`: never report a link the board
+   * does not show.
+   */
+  blockedBy?: WorkItemRef[]
 }
 
 export type LinkedPullRequest = {

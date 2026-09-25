@@ -349,3 +349,48 @@ describe('getItem epic derivation', () => {
     expect(detail.epic).toEqual({ owner: 'acme', repo: 'platform', number: 339 })
   })
 })
+
+describe('getItem reports blockers', () => {
+  function clientFor(blockedBy: unknown) {
+    return {
+      graphql: async () => ({
+        repository: {
+          issue: {
+            id: 'I_1', number: 61, title: 't', body: '', state: 'OPEN', parent: null,
+            blockedBy,
+            projectItems: { nodes: [], pageInfo: { hasNextPage: false } },
+          },
+        },
+      }),
+    } as any
+  }
+  const board = { provider: 'github' as const, owner: 'acme', number: 1 }
+  const ref = { owner: 'acme', repo: 'web', number: 61 }
+
+  it('returns each blocker as a fully qualified reference', async () => {
+    const item = await getItem(clientFor({
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        { number: 60, repository: { owner: { login: 'acme' }, name: 'web' } },
+        { number: 60, repository: { owner: { login: 'acme' }, name: 'api' } },
+      ],
+    }), board, ref)
+    expect(item.blockedBy).toEqual([
+      { owner: 'acme', repo: 'web', number: 60 },
+      { owner: 'acme', repo: 'api', number: 60 },
+    ])
+  })
+
+  it('returns no blockers as an empty list, not null', async () => {
+    const item = await getItem(clientFor({ pageInfo: { hasNextPage: false }, nodes: [] }), board, ref)
+    expect(item.blockedBy).toEqual([])
+  })
+
+  // The same rule as projectItems above: a truncated page is not an answer.
+  it('refuses to report a truncated blocker list as complete', async () => {
+    const err = await getItem(clientFor({ pageInfo: { hasNextPage: true }, nodes: [] }), board, ref)
+      .catch((e: Error) => e)
+    expect((err as Error).message).toMatch(/more than 50 blockers/)
+    expect((err as Error).message).toContain('acme/web#61')
+  })
+})

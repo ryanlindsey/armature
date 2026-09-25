@@ -4,7 +4,7 @@ import { REPO_BOARDS_QUERY } from '../../server/config-io.js'
 import { BOARD_QUERY } from '../../server/providers/github/board.js'
 import { EPIC_ENRICHMENT } from '../../server/providers/github/epic.js'
 import { GitHubClient } from '../../server/providers/github/client.js'
-import { ADD_SUB_ISSUE, PARENT_ID } from '../../server/providers/github/items.js'
+import { ADD_BLOCKED_BY, ADD_SUB_ISSUE, ITEM_QUERY, PARENT_ID } from '../../server/providers/github/items.js'
 
 // ---------------------------------------------------------------------------------------------
 // The test that would have caught the shipped `owner{ login }`.
@@ -112,6 +112,31 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
 
     expect(error, 'a mutation on unresolvable ids must not succeed').not.toBeNull()
     // Execution was reached, so the document validated. A schema rejection reads very differently.
+    expect(error!.message).toMatch(/could not resolve to a node/i)
+    expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
+  })
+
+  it('accepts ITEM_QUERY, with blockedBy, against the live schema', async () => {
+    const board = await (await client()).graphql<any>(BOARD_QUERY, { owner: owner!, number, cursor: null })
+    const content = board.repositoryOwner?.projectV2?.items?.nodes?.find(
+      (n: any) => n?.content?.number != null,
+    )?.content
+    expect(content, 'the integration board must hold at least one issue').toBeDefined()
+    const data = await (await client()).graphql<any>(ITEM_QUERY, {
+      owner: content.repository.owner.login, name: content.repository.name, number: content.number,
+    })
+    expect(data.repository?.issue?.blockedBy?.nodes).toBeDefined()
+  })
+
+  // Checked exactly as ADD_SUB_ISSUE is: unresolvable ids reach execution only if the document
+  // validated, and nothing is blocked.
+  it('accepts ADD_BLOCKED_BY against the live schema, without blocking anything', async () => {
+    const unresolvable = 'I_kwDOAAAAAAAAAAAAAAAAAA'
+    const error = await (await client())
+      .graphql<any>(ADD_BLOCKED_BY, { blocked: unresolvable, blocker: unresolvable })
+      .then(() => null)
+      .catch((e: Error) => e)
+    expect(error, 'a mutation on unresolvable ids must not succeed').not.toBeNull()
     expect(error!.message).toMatch(/could not resolve to a node/i)
     expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
   })

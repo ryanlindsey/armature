@@ -101,6 +101,7 @@ const client = {
           body: '',
           state: node.content.state,
           parent: node.content.parent,
+          blockedBy: { pageInfo: { hasNextPage: false }, nodes: [] },
           projectItems: {
             nodes: [
               { id: node.id, project: { number: 1 }, fieldValueByName: node.fieldValueByName },

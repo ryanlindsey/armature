@@ -17382,6 +17382,7 @@ query($owner:String!,$name:String!,$number:Int!){
     issue(number:$number){
       id number title body state
       parent{ number repository{ owner{ login } name } }
+      blockedBy(first:50){ pageInfo{ hasNextPage } nodes{ number repository{ owner{ login } name } } }
       projectItems(first:100){
         nodes{
           id
@@ -17414,6 +17415,16 @@ async function getItem(client, board, ref) {
     repo: issue2.parent.repository.name,
     number: issue2.parent.number
   } : null;
+  if (issue2.blockedBy?.pageInfo?.hasNextPage) {
+    throw new Error(
+      `${formatRef(ref)} has more than 50 blockers, so its blockers could not be read in full.`
+    );
+  }
+  const blockedBy = (issue2.blockedBy?.nodes ?? []).map((n) => ({
+    owner: n.repository.owner.login,
+    repo: n.repository.name,
+    number: n.number
+  }));
   return {
     ref,
     id: issue2.id,
@@ -17425,7 +17436,8 @@ async function getItem(client, board, ref) {
     parent: epicFromLink,
     // Parent link only — see the comment above parseEpicFromBody for why the body fallback
     // is not called here in v1.
-    epic: epicFromLink
+    epic: epicFromLink,
+    blockedBy
   };
 }
 var StaleItemError = class extends Error {
@@ -17514,11 +17526,37 @@ var MissingParentError = class extends Error {
   }
 };
 var UnlinkedItemError = class extends Error {
-  constructor(ref, parent, cause) {
+  constructor(ref, parent, cause, unwritten = []) {
+    const also = unwritten.length ? `its epic is unset, and it is not yet marked blocked by ${unwritten.map(formatRef).join(", ")}, which were never attempted. board_next will rank it as a parentless item. Set the parent and add those blockers on the issue itself` : `only its epic is unset, so board_next will rank it as a parentless item. Set the parent on the issue itself`;
     super(
-      `Created ${formatRef(ref)}, added it to the board and set its status, but could not link it to ${formatRef(parent)}: ${cause} The item is real and workable; only its epic is unset, so board_next will rank it as a parentless item. Set the parent on the issue, or retry.`
+      `Created ${formatRef(ref)}, added it to the board and set its status, but could not link it to ${formatRef(parent)}: ${cause} The item is real and workable; ${also} \u2014 do not call item_create again, which would create a second issue.`
     );
     this.name = "UnlinkedItemError";
+  }
+};
+var UnknownStatusError = class extends Error {
+  constructor(status, offered) {
+    super(
+      `This board has no status "${status}", so nothing was created. It offers: ${offered.join(", ")}. Status names are matched exactly, including case.`
+    );
+    this.name = "UnknownStatusError";
+  }
+};
+var MissingBlockerError = class extends Error {
+  constructor(blocker, into) {
+    super(
+      `Cannot mark a new ${into.owner}/${into.repo} issue as blocked by ${formatRef(blocker)}: that issue does not exist, or is not visible to this credential. Nothing was created. Check the reference, or create the blocker first.`
+    );
+    this.name = "MissingBlockerError";
+  }
+};
+var UnsequencedItemError = class extends Error {
+  constructor(ref, parent, missing, confirmed, cause) {
+    const list = (refs) => refs.length ? refs.map(formatRef).join(", ") : "none";
+    super(
+      `Created ${formatRef(ref)}, added it to the board, set its status` + (parent ? ` and linked it to ${formatRef(parent)}` : "") + `, but could not confirm it is blocked by ${list(missing)}: ${cause} Confirmed blockers: ${list(confirmed)}. The item is real and workable. Add the missing blockers on the issue itself \u2014 do not call item_create again, which would create a second issue.`
+    );
+    this.name = "UnsequencedItemError";
   }
 };
 var REPO_ID = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ id } }`;
@@ -17538,6 +17576,18 @@ var ADD_SUB_ISSUE = `
 mutation($parent:ID!,$child:ID!){
   addSubIssue(input:{issueId:$parent,subIssueId:$child}){ subIssue{ id } }
 }`;
+var ADD_BLOCKED_BY = `
+mutation($blocked:ID!,$blocker:ID!){
+  addBlockedBy(input:{issueId:$blocked,blockingIssueId:$blocker}){ issue{ id } }
+}`;
+function distinctRefs(refs) {
+  const byKey = /* @__PURE__ */ new Map();
+  for (const ref of refs) {
+    const k = formatRef(ref).toLowerCase();
+    if (!byKey.has(k)) byKey.set(k, ref);
+  }
+  return [...byKey.values()];
+}
 function sameRef(a, b) {
   if (!a) return false;
   return a.number === b.number && a.owner.toLowerCase() === b.owner.toLowerCase() && a.repo.toLowerCase() === b.repo.toLowerCase();
@@ -17545,6 +17595,11 @@ function sameRef(a, b) {
 async function createItem(client, board, snapshot, input, options = {}) {
   const read = options.read ?? ((r) => getItem(client, board, r));
   const ref = { owner: input.owner, repo: input.repo, number: 0 };
+  const status = input.status ?? snapshot.semantics.todo;
+  if (!snapshot.statusOptions.some((o) => o.name === status)) {
+    throw new UnknownStatusError(status, snapshot.statusOptions.map((o) => o.name));
+  }
+  const blockers = distinctRefs(input.blockedBy ?? []);
   if (options.dryRun) {
     return {
       ref,
@@ -17552,10 +17607,11 @@ async function createItem(client, board, snapshot, input, options = {}) {
       title: input.title,
       body: input.body,
       state: "OPEN",
-      status: snapshot.semantics.todo,
+      status,
       projectItemId: "(dry-run)",
       parent: input.parent ?? null,
-      epic: input.parent ?? null
+      epic: input.parent ?? null,
+      blockedBy: blockers
     };
   }
   const repo = await client.graphql(REPO_ID, { owner: input.owner, name: input.repo });
@@ -17569,6 +17625,17 @@ async function createItem(client, board, snapshot, input, options = {}) {
     const id = found.repository?.issue?.id;
     if (!id) throw new MissingParentError(input.parent, input);
     link = { ref: input.parent, id };
+  }
+  const blocking = [];
+  for (const blocker of blockers) {
+    const found = await client.graphql(PARENT_ID, {
+      owner: blocker.owner,
+      name: blocker.repo,
+      number: blocker.number
+    });
+    const id = found.repository?.issue?.id;
+    if (!id) throw new MissingBlockerError(blocker, input);
+    blocking.push({ ref: blocker, id });
   }
   const created = await client.graphql(CREATE_ISSUE, {
     repo: repo.repository.id,
@@ -17586,34 +17653,68 @@ async function createItem(client, board, snapshot, input, options = {}) {
   }
   let withStatus;
   try {
-    withStatus = await setStatus(client, board, snapshot, madeRef, snapshot.semantics.todo, {
+    withStatus = await setStatus(client, board, snapshot, madeRef, status, {
       read,
       projectItemId: added.addProjectV2ItemById.item.id
     });
   } catch (error2) {
     throw new StatuslessItemError(
       madeRef,
-      snapshot.semantics.todo,
+      status,
       error2 instanceof Error ? error2.message : String(error2)
     );
   }
-  if (!link) return withStatus;
-  try {
-    await client.graphql(ADD_SUB_ISSUE, { parent: link.id, child: contentId });
-    const linked = await read(madeRef);
-    if (!sameRef(linked.parent, link.ref)) {
-      throw new Error(
-        `reading it back shows ${linked.parent ? formatRef(linked.parent) : "no parent"}.`
+  let landed = withStatus;
+  if (link) {
+    try {
+      await client.graphql(ADD_SUB_ISSUE, { parent: link.id, child: contentId });
+      const linked = await read(madeRef);
+      if (!sameRef(linked.parent, link.ref)) {
+        throw new Error(
+          `reading it back shows ${linked.parent ? formatRef(linked.parent) : "no parent"}.`
+        );
+      }
+      landed = linked;
+    } catch (error2) {
+      throw new UnlinkedItemError(
+        madeRef,
+        link.ref,
+        error2 instanceof Error ? error2.message : String(error2),
+        blockers
       );
     }
-    return linked;
+  }
+  if (blocking.length === 0) return landed;
+  const refused = [];
+  for (const b of blocking) {
+    try {
+      await client.graphql(ADD_BLOCKED_BY, { blocked: contentId, blocker: b.id });
+    } catch (error2) {
+      refused.push(`${formatRef(b.ref)}: ${error2 instanceof Error ? error2.message : String(error2)}`);
+    }
+  }
+  let after;
+  try {
+    after = await read(madeRef);
   } catch (error2) {
-    throw new UnlinkedItemError(
+    throw new UnsequencedItemError(
       madeRef,
-      link.ref,
-      error2 instanceof Error ? error2.message : String(error2)
+      link?.ref ?? null,
+      blockers,
+      [],
+      `reading it back failed: ${error2 instanceof Error ? error2.message : String(error2)}`
     );
   }
+  const confirmed = blockers.filter((b) => after.blockedBy.some((a) => sameRef(a, b)));
+  const missing = blockers.filter((b) => !confirmed.includes(b));
+  if (missing.length === 0) return after;
+  throw new UnsequencedItemError(
+    madeRef,
+    link?.ref ?? null,
+    missing,
+    confirmed,
+    refused.length ? `${refused.join("; ")}.` : "reading it back does not show them."
+  );
 }
 
 // server/providers/github/provider.ts
@@ -17788,7 +17889,7 @@ var TOOLS = [
   },
   {
     name: "item_create",
-    description: "Create an issue, add it to the board, set it to the board's todo status, and optionally file it under a parent epic, so the new item is one board_next can return without a second call. Every step is verified, and if one fails it reports loudly which of them landed and which did not.",
+    description: "Create an issue, add it to the board, and set its status \u2014 the board's todo status unless `status` names another \u2014 then optionally file it under a parent epic and mark it blocked by other items. Every step is verified, and if one fails it reports loudly which of them landed and which did not.",
     inputSchema: {
       type: "object",
       properties: {
@@ -17798,6 +17899,15 @@ var TOOLS = [
         parent: {
           type: "string",
           description: "Optional epic to file this under, as owner/repo#number."
+        },
+        status: {
+          type: "string",
+          description: "Optional board status to file it in, by exact name. Defaults to the board's todo status."
+        },
+        blockedBy: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional items this one is blocked by, each as owner/repo#number."
         }
       },
       required: ["repo", "title", "body"]
@@ -17951,6 +18061,22 @@ async function dispatch(provider, name, args, options) {
         throw new Error(`"repo" must be owner/name, got "${repoArg}".`);
       }
       const parent = args.parent === void 0 || args.parent === null ? void 0 : await resolveRef(refArgument(name, "parent", args.parent));
+      const status = args.status === void 0 || args.status === null ? void 0 : requiredString(name, "status", args.status);
+      let blockedBy;
+      if (args.blockedBy !== void 0 && args.blockedBy !== null) {
+        if (!Array.isArray(args.blockedBy)) {
+          throw new InvalidArgumentError(
+            name,
+            "blockedBy",
+            "an array of references like acme/web#278",
+            args.blockedBy
+          );
+        }
+        blockedBy = [];
+        for (const token of args.blockedBy) {
+          blockedBy.push(await resolveRef(refArgument(name, "blockedBy", token)));
+        }
+      }
       const created = await provider.create({
         owner,
         repo: repoName,
@@ -17959,7 +18085,9 @@ async function dispatch(provider, name, args, options) {
         // Spread rather than `parent: undefined`: CreateInput's field is optional, and a provider
         // or test asserting on the input it was handed should see the key absent when no epic was
         // asked for, not present and undefined.
-        ...parent ? { parent } : {}
+        ...parent ? { parent } : {},
+        ...status !== void 0 ? { status } : {},
+        ...blockedBy && blockedBy.length > 0 ? { blockedBy } : {}
       });
       logMutation(
         {

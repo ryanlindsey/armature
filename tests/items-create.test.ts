@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   createItem,
+  MissingBlockerError,
   MissingParentError,
   OrphanedIssueError,
   StatuslessItemError,
+  UnknownStatusError,
   UnlinkedItemError,
+  UnsequencedItemError,
 } from '../server/providers/github/items.js'
 import { selectNext } from '../server/providers/github/next.js'
 import type { WorkItemRef } from '../server/ref.js'
@@ -13,7 +16,7 @@ const board = { provider: 'github' as const, owner: 'acme', number: 1 }
 const snapshot = {
   board: { provider: 'github', name: 'acme/1', source: 'repo' as const },
   id: 'PVT_1', statusFieldId: 'F_1',
-  statusOptions: [{ id: 'o-todo', name: 'Todo' }],
+  statusOptions: [{ id: 'o-todo', name: 'Todo' }, { id: 'o-prog', name: 'In progress' }],
   semantics: { todo: 'Todo', claimed: 'In progress', review: null, done: 'Done' },
   items: [], repositories: [], collisions: {},
 }
@@ -85,10 +88,19 @@ function fakeBoard(
     linkLandsAs?: WorkItemRef | null
     /** The parent issue does not resolve to a node — a wrong reference, or no access. */
     parentMissing?: boolean
+    /** The blocker with this number does not resolve to a node. */
+    missingBlocker?: number
+    /** Every addBlockedBy mutation is refused. */
+    failBlock?: boolean
+    /** The blocker writes return, but the read-back shows exactly these blockers. */
+    blockLandsAs?: WorkItemRef[]
   } = {},
 ) {
   let status: string | null = null
   let parent: WorkItemRef | null = null
+  let blockedBy: WorkItemRef[] = []
+  const nodeRefs = new Map<string, WorkItemRef>()
+  const blockVariables: Record<string, string>[] = []
 
   /** Which documents were sent, in order, so a test can assert what ran before what. */
   const sent: string[] = []
@@ -121,9 +133,22 @@ function fakeBoard(
         parent = options.linkLandsAs !== undefined ? options.linkLandsAs : epic
         return { addSubIssue: { subIssue: { id: 'I_1' } } }
       }
+      if (query.includes('addBlockedBy')) {
+        sent.push('addBlockedBy')
+        blockVariables.push(variables)
+        if (options.failBlock) throw new Error('block failed')
+        const blocker = nodeRefs.get(variables.blocker!)
+        if (blocker && options.blockLandsAs === undefined) blockedBy = [...blockedBy, blocker]
+        return { addBlockedBy: { issue: { id: variables.blocked } } }
+      }
       if (query.includes('issue(number:$number){ id }')) {
         sent.push('parentNodeId')
-        return { repository: { issue: options.parentMissing ? null : { id: 'I_epic' } } }
+        const isEpic = variables.name === epic.repo && Number(variables.number) === epic.number
+        if (isEpic) return { repository: { issue: options.parentMissing ? null : { id: 'I_epic' } } }
+        if (Number(variables.number) === options.missingBlocker) return { repository: { issue: null } }
+        const id = `I_${variables.name}_${variables.number}`
+        nodeRefs.set(id, { owner: variables.owner!, repo: variables.name!, number: Number(variables.number) })
+        return { repository: { issue: { id } } }
       }
       sent.push('repoNodeId')
       return { repository: { id: 'R_1' } }
@@ -140,9 +165,10 @@ function fakeBoard(
     projectItemId: options.unreadableMembership ? null : 'PVTI_1',
     parent,
     epic: parent,
+    blockedBy: options.blockLandsAs ?? blockedBy,
   })
 
-  return { client, read, sent, linkVariables: () => linkVariables }
+  return { client, read, sent, linkVariables: () => linkVariables, blockVariables }
 }
 
 describe('createItem lands the item where work is found', () => {
@@ -374,4 +400,169 @@ describe('the dry-run prediction matches what the real path does with a parent',
 
     expect(fake.client.graphql).not.toHaveBeenCalled()
   })
+})
+
+const blockerA: WorkItemRef = { owner: 'acme', repo: 'web', number: 60 }
+const blockerB: WorkItemRef = { owner: 'acme', repo: 'api', number: 60 }
+
+describe('createItem files the item in the status it is asked for', () => {
+  it('writes and verifies a status other than todo', async () => {
+    const { client, read } = fakeBoard()
+    const created = await createItem(client, board, snapshot, { ...input, status: 'In progress' }, { read })
+    expect(created.status).toBe('In progress')
+    // Not selectable: board_next only returns todo items. This is how a spec stays out of it.
+    expect(selectNext({ ...snapshot, items: [await read(created.ref)] }, {}).kind).toBe('blocked')
+  })
+
+  it('refuses a status the board does not offer, before creating anything', async () => {
+    const fake = fakeBoard()
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, status: 'Shipped' }, { read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnknownStatusError)
+    expect(fake.sent).not.toContain('createIssue')
+    expect((err as Error).message).toMatch(/nothing was created/i)
+    expect((err as Error).message).toContain('Todo, In progress')
+  })
+
+  // Review Focus 1: matched exactly, never folded.
+  it('refuses a status in the wrong case rather than matching it loosely', async () => {
+    const fake = fakeBoard()
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, status: 'in progress' }, { read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnknownStatusError)
+    expect(fake.sent).not.toContain('createIssue')
+  })
+
+  // Review Focus 5: the check is local, so a dry run can and must make it.
+  it('refuses an unknown status under dry run too', async () => {
+    const fake = fakeBoard()
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, status: 'Shipped' }, { dryRun: true, read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnknownStatusError)
+    expect(fake.client.graphql).not.toHaveBeenCalled()
+  })
+})
+
+describe('createItem marks the item blocked by the items it is asked for', () => {
+  it('reports the blockers the read-back shows', async () => {
+    const { client, read } = fakeBoard()
+    const created = await createItem(client, board, snapshot, { ...input, blockedBy: [blockerA, blockerB] }, { read })
+    expect(created.blockedBy).toEqual([blockerA, blockerB])
+  })
+
+  // Direction is the whole mutation: `issueId` waits, `blockingIssueId` is waited on.
+  it('sends the new issue as the blocked one and the named item as the blocker', async () => {
+    const fake = fakeBoard()
+    await createItem(fake.client, board, snapshot, { ...input, blockedBy: [blockerA] }, { read: fake.read })
+    expect(fake.blockVariables).toEqual([{ blocked: 'I_1', blocker: 'I_web_60' }])
+  })
+
+  it('writes blockers last, after the parent link', async () => {
+    const fake = fakeBoard()
+    await createItem(
+      fake.client, board, snapshot, { ...input, parent: epic, blockedBy: [blockerA] }, { read: fake.read },
+    )
+    expect(fake.sent.filter((s) => s !== 'repoNodeId' && s !== 'parentNodeId')).toEqual([
+      'createIssue', 'addToBoard', 'setStatus', 'addSubIssue', 'addBlockedBy',
+    ])
+  })
+
+  it('refuses a blocker it cannot resolve, before creating anything', async () => {
+    const fake = fakeBoard({ missingBlocker: 60 })
+    const err = await createItem(
+      fake.client, board, snapshot, { ...input, blockedBy: [blockerA] }, { read: fake.read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(MissingBlockerError)
+    expect(fake.sent).not.toContain('createIssue')
+    expect((err as Error).message).toContain('acme/web#60')
+    expect((err as Error).message).toMatch(/nothing was created/i)
+  })
+
+  // Review Focus 2.
+  it('sends one mutation per distinct blocker, however it was spelled', async () => {
+    const fake = fakeBoard()
+    await createItem(
+      fake.client, board, snapshot,
+      { ...input, blockedBy: [blockerA, { owner: 'Acme', repo: 'Web', number: 60 }] },
+      { read: fake.read },
+    )
+    expect(fake.sent.filter((s) => s === 'addBlockedBy')).toHaveLength(1)
+  })
+
+  // Review Focus 4.
+  it('treats an empty blockedBy exactly like no blockedBy', async () => {
+    const fake = fakeBoard()
+    await createItem(fake.client, board, snapshot, { ...input, blockedBy: [] }, { read: fake.read })
+    expect(fake.sent).not.toContain('addBlockedBy')
+    expect(fake.sent).not.toContain('parentNodeId')
+  })
+})
+
+describe('createItem reports an unsequenced item when a blocker is the part that fails', () => {
+  it('names the blockers it could not confirm and the ones it could', async () => {
+    const { client, read } = fakeBoard({ blockLandsAs: [blockerA] })
+    const err = await createItem(
+      client, board, snapshot, { ...input, blockedBy: [blockerA, blockerB] }, { read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnsequencedItemError)
+    expect(err).not.toBeInstanceOf(UnlinkedItemError)
+    const message = (err as Error).message
+    expect(message).toContain('acme/api#60')
+    expect(message).toMatch(/confirmed blockers: acme\/web#60/i)
+  })
+
+  it('carries the refusal when the mutation itself fails', async () => {
+    const { client, read } = fakeBoard({ failBlock: true })
+    const err = await createItem(
+      client, board, snapshot, { ...input, blockedBy: [blockerA] }, { read },
+    ).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(UnsequencedItemError)
+    expect((err as Error).message).toContain('block failed')
+  })
+
+  // Retrying item_create after a half-landing creates a second issue.
+  it('never advises calling item_create again', async () => {
+    const { client, read } = fakeBoard({ failBlock: true })
+    const err = await createItem(
+      client, board, snapshot, { ...input, blockedBy: [blockerA] }, { read },
+    ).catch((e: Error) => e)
+    expect((err as Error).message).not.toMatch(/\bretry\b/i)
+    expect((err as Error).message).toMatch(/second issue/)
+  })
+})
+
+// The same hazard in the existing fourth end state, whose message used to end "or retry".
+it('UnlinkedItemError never advises calling item_create again', async () => {
+  const { client, read } = fakeBoard({ failLink: true })
+  const err = await createItem(client, board, snapshot, { ...input, parent: epic }, { read })
+    .catch((e: Error) => e)
+  expect((err as Error).message).not.toMatch(/\bretry\b/i)
+  expect((err as Error).message).toMatch(/second issue/)
+})
+
+describe('the dry-run prediction matches the real path for status and blockers', () => {
+  it('predicts the status and blockers the real path produces', async () => {
+    const { client, read } = fakeBoard()
+    const asked = { ...input, status: 'In progress', blockedBy: [blockerA] }
+    const predicted = await createItem(client, board, snapshot, asked, { dryRun: true, read })
+    const actual = await createItem(client, board, snapshot, asked, { read })
+    expect(predicted.status).toEqual(actual.status)
+    expect(predicted.blockedBy).toEqual(actual.blockedBy)
+  })
+})
+
+// The link fails before any blocker is written, so "only its epic is unset" would be false.
+it('UnlinkedItemError names the blockers it never wrote when the link fails first', async () => {
+  const fake = fakeBoard({ failLink: true })
+  const err = await createItem(
+    fake.client, board, snapshot, { ...input, parent: epic, blockedBy: [blockerA] }, { read: fake.read },
+  ).catch((e: Error) => e)
+  expect(err).toBeInstanceOf(UnlinkedItemError)
+  expect(fake.sent).not.toContain('addBlockedBy')
+  expect((err as Error).message).not.toMatch(/only its epic is unset/)
+  expect((err as Error).message).toContain('acme/web#60')
+  expect((err as Error).message).toMatch(/second issue/)
 })
