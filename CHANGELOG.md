@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/ryanlindsey/armature/compare/armature-v0.4.0...armature-v0.5.0) (2026-09-25)
+
+
+### Features
+
+* **skill:** default to a worktree, with a per-run "no worktree" override ([#66](https://github.com/ryanlindsey/armature/issues/66)) ([b3172a8](https://github.com/ryanlindsey/armature/commit/b3172a88b082e9c3cf2d13a5195c46aeee4b5eb8))
+
 ## [0.4.0](https://github.com/ryanlindsey/armature/compare/armature-v0.3.4...armature-v0.4.0) (2026-09-12)
 
 
