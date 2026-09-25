@@ -30,9 +30,12 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    the PR exists; carry Minor ones into the PR body so the human reviewer sees them.
 8. **Verify, then settle the item's acceptance criteria.** Run every command in this repository's
    `.armature.json` `verify` list. If there is no such list, run the project's test suite. Then take
-   the item's checklist from `item_get` and decide, entry by entry, whether evidence from this run
-   settles it — see the evidence rule below. Tick the settled ones with `item_check`, in one call.
-   Leave the rest.
+   the item's checklist from `item_get`. Its criteria are the entries whose `heading` names
+   acceptance ("Acceptance", "Acceptance criteria", "Definition of done"); if no heading does,
+   treat the whole checklist as the criteria and say so in the receipt. Leave entries under other
+   headings, such as plan steps, alone. Decide, criterion by criterion, whether evidence from this
+   run settles it — see the evidence rule below. Tick the settled ones with `item_check`, in one
+   call, and leave the rest.
 9. **Open a PR.** Use `superpowers:finishing-a-development-branch`, taking the option that pushes
    and creates a pull request — by its text, never its number; see the rule below. Title is a
    Conventional Commit. Body contains `Closes #<number>` and the acceptance receipt: each settled
@@ -90,15 +93,22 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   merges. Keep the worktree; the human iterates on review feedback there. That skill also asks which
   branch the work split from — answer with the repository's default branch — and re-runs the suite
   step 8 has just run, which is wasteful but harmless.
-- **Tick a box only on evidence, and never untick one.** `item_check` flips whatever box it is
+- **Tick a box only on evidence, and never untick one.** `item_check` sets whatever state it is
   handed; deciding which boxes deserve it is this rule. An entry is settled only by something
   observed in this run: a command the criterion names, run and passed; a test in the diff that
-  asserts it, with the suite green; a `verify` command that covers it; or a filesystem fact read
-  directly. It is **not** settled by an implementer's report that it did it, by a plausible reading
+  asserts it, with the suite green; a `verify` command whose success is what the criterion asks
+  for; or a filesystem fact read directly. It is **not** settled by an implementer's report that it did it, by a plausible reading
   of the diff, or by a test whose name merely suggests it. Never tick an entry you did not observe
   evidence for, however obviously true it looks, and **never untick** one a person ticked — if you
   cannot confirm it, leave it and say so in the receipt. An unticked box costs nothing. A wrongly
   ticked one launders an unverified assertion into a record a reviewer will trust, which is the
   failure that ended `parseEpicFromBody`. Unsettled criteria never block the PR: armature reports
   the gap and hands back, because a person reads every PR anyway.
+- **Send `item_check` only what it can land.** Only ever pass `checked: true`, with each entry's
+  text copied verbatim from `item_get`; if nothing is settled, skip the call. The batch is
+  all-or-nothing, so one bad entry writes nothing. If it raises, run `item_get` again, drop any
+  entry the error names as missing or ambiguous — it is unsettled, with that reason — and retry
+  once. If it fails again, go on to step 9 and say in the receipt that nothing was ticked, and why.
+  Under a dry run the result is marked `dryRun` and nothing was written: say the ticks were
+  predicted, not made.
 - **Never merge.** Armature opens PRs; people merge them.

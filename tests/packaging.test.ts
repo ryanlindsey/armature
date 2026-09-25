@@ -351,6 +351,7 @@ describe('the skill carries the policies the server deliberately does not enforc
     const rules = section(skill, 'Rules')
     expect(rules).toMatch(/evidence/i)
     expect(rules).toMatch(/item_check/)
+    expect(rules, 'names what does not count as evidence').toMatch(/implementer's report/i)
   })
 
   it('forbids un-ticking a box a person ticked', () => {
@@ -359,6 +360,12 @@ describe('the skill carries the policies the server deliberately does not enforc
 
   it('settles criteria in the loop, not only in the rules', () => {
     expect(section(skill, 'The loop')).toMatch(/item_check/)
+  })
+
+  // item_get reports every task entry, plan steps included; the heading is context the server
+  // deliberately leaves to the skill to interpret.
+  it('says which checklist entries are acceptance criteria', () => {
+    expect(section(skill, 'The loop')).toMatch(/`heading`[\s\S]{0,80}acceptance/i)
   })
 })
 
