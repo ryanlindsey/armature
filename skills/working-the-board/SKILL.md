@@ -21,8 +21,9 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    not this one.
 3. **Check its prerequisites.** See the prerequisite rule below. Do this before claiming, not after.
 4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
-5. **Isolate.** Use `superpowers:using-git-worktrees`. It asks before creating a worktree unless a
-   preference is already on record; that question is the human's to answer, so let it be asked.
+5. **Isolate.** Use `superpowers:using-git-worktrees`, and create the worktree without asking —
+   invoking armature is the consent. If the human said not to use a worktree, work in place
+   instead; see the rule below.
 6. **Implement.** Use `superpowers:test-driven-development` — the failing test first, watched
    failing, then the implementation.
 7. **Review.** Use `superpowers:requesting-code-review`. Fix Critical and Important findings before
@@ -62,6 +63,15 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   If any of them is not in the board's done status, say which item is waiting on which, and STOP
   without claiming. The server does not check prerequisites — it reports facts and effects, and
   "this should wait" is a judgment — so this rule is the only place that check exists.
+- **`using-git-worktrees` does not get to ask for consent.** It asks before creating a worktree
+  unless a preference is on record, and a missed prompt stalls the whole run. Invoking armature is
+  that preference: answer *yes* and skip the question. If it reports you are already in a linked
+  worktree, use that one. The exception is the human saying otherwise for this run — "no worktree",
+  "don't use a worktree", "work in place", in any wording. Then answer *no*: if the checkout has
+  uncommitted changes, say so and STOP rather than branching over them; otherwise branch in place as
+  `issue-<number>-<slug>` from the repository's default branch. The override lasts for this run
+  only. Its other question stays the human's: if the baseline tests fail, report them and let the
+  human decide whether to go on.
 - **`finishing-a-development-branch` does not get to ask its menu.** Take the option whose text is
   **push and create a Pull Request**, and skip the question. Name it by its text, never its number:
   that skill shows a different menu on a detached HEAD — the state `using-git-worktrees` reports for

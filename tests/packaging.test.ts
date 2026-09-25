@@ -237,10 +237,42 @@ describe('the commands declare the tools they actually use', () => {
     expect(fm).toMatch(/\bTask\b/)
   })
 
+  // using-git-worktrees prefers the harness's native tool over `git worktree add`. Left off this
+  // list, the isolate step stops on a permission prompt — the same stall #65 removes from the skill.
+  it('/armature-next pre-approves the native worktree tool its isolate step prefers', () => {
+    const fm = frontmatter(readText('commands/armature-next.md'))
+    expect(fm).toMatch(/\bEnterWorktree\b/)
+  })
+
   it('names the MCP server the plugin actually declares', () => {
     const plugin = read('.claude-plugin/plugin.json')
     expect(Object.keys(plugin.mcpServers)).toEqual(['armature'])
     expect(plugin.name).toBe('armature')
+  })
+})
+
+// /armature-next's arguments carry a ref, an instruction such as "no worktree", or both (#65).
+// Only the ref may reach item_get: the rest would be refused as a malformed reference, and a
+// bare number in it must still never be read as one.
+describe('/armature-next separates the ref from the human\'s instructions', () => {
+  const command = readText('commands/armature-next.md')
+  const body = command.replace(/^---\n[\s\S]*?\n---/, '')
+
+  it('advertises instructions in its argument hint', () => {
+    expect(frontmatter(command)).toMatch(/argument-hint:.*no worktree/i)
+  })
+
+  it('passes only the ref to item_get and the rest to the skill', () => {
+    expect(body).toMatch(/item_get/)
+    expect(body).toMatch(/instructions/i)
+  })
+
+  it('still never reads a bare number as a ref', () => {
+    expect(body).toMatch(/bare/i)
+  })
+
+  it('is documented in the README', () => {
+    expect(section(readText('README.md'), 'Commands')).toMatch(/no worktree/i)
   })
 })
 
@@ -316,6 +348,30 @@ describe('the skill composes with Superpowers rather than reimplementing it', ()
     const loop = section(skill, 'The loop')
     expect(loop, 'the loop must name the option').toMatch(/pull request/i)
     expect(loop, 'the loop must not pre-select by ordinal').not.toMatch(/option \d/i)
+  })
+
+  // using-git-worktrees asks before creating a worktree unless a preference is on record, and a
+  // missed prompt stalls the whole run (#65). Invoking armature is that preference; the human can
+  // still decline it for one run by saying so.
+  it('answers the worktree consent question in advance', () => {
+    const loop = section(skill, 'The loop')
+    expect(loop, 'the loop must no longer leave the question open').not.toMatch(/let it be asked/i)
+    expect(loop).toMatch(/without asking/i)
+
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/consent/i)
+  })
+
+  it('lets the human decline the worktree for one run', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/no worktree/i)
+    expect(rules, 'says where the work goes instead').toContain('issue-<number>-<slug>')
+    expect(rules, 'refuses to branch over local changes').toMatch(/uncommitted/i)
+  })
+
+  // Answering consent in advance must not swallow the one question that is really the human's.
+  it('leaves a failing baseline to the human', () => {
+    expect(section(skill, 'Rules')).toMatch(/baseline/i)
   })
 
   // The loop declares which steps it delegates. Every one of them must have a fallback row, keyed
