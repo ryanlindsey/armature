@@ -286,6 +286,17 @@ describe('applyChecks', () => {
     expect(() => applyChecks(REF, BODY, [{ text: 'sample', checked: true }])).toThrow(NoSuchEntryError)
   })
 
+  it('resolves text that also appears inside a fence to the entry outside it', () => {
+    const body = ['- [ ] twin', '```', '- [ ] twin', '```'].join('\n')
+    expect(applyChecks(REF, body, [{ text: 'twin', checked: true }]).body).toBe(
+      ['- [x] twin', '```', '- [ ] twin', '```'].join('\n'),
+    )
+  })
+
+  it('says "1 entry", not "1 entries"', () => {
+    expect(() => applyChecks(REF, '- [ ] only', [{ text: 'nope', checked: true }])).toThrow(/It has 1 entry\./)
+  })
+
   it('is idempotent: a state an entry already holds moves no bytes', () => {
     const { body, changed } = applyChecks(REF, BODY, [{ text: 'second', checked: true }])
     expect(changed).toBe(0)

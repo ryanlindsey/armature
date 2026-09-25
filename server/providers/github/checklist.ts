@@ -147,7 +147,7 @@ export class NoSuchEntryError extends Error {
   constructor(ref: WorkItemRef, text: string, available: number) {
     super(
       `${formatRef(ref)} has no checklist entry reading exactly "${text}". It has ${available} ` +
-        `entries. The match is whole-line and exact, on the text after the "- [ ] " marker: copy ` +
+        `${available === 1 ? 'entry' : 'entries'}. The match is whole-line and exact, on the text after the "- [ ] " marker: copy ` +
         `it from item_get rather than retyping it. Nothing was written.`,
     )
     this.name = 'NoSuchEntryError'
