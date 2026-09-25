@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Contributing guide
+    url: https://github.com/ryanlindsey/armature/blob/main/CONTRIBUTING.md
+    about: How to claim an issue, run the suite, and what a pull request must carry.
+  - name: Open harness ports
+    url: https://github.com/ryanlindsey/armature/issues/30
+    about: The ports already open for contribution, and the evidence each one needs.
