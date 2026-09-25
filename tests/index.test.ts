@@ -706,3 +706,74 @@ describe('epic_survey', () => {
     expect(lines).toEqual([])
   })
 })
+
+describe('dispatch: item_create takes a status and blockers', () => {
+  const created = {
+    ref: { owner: 'acme', repo: 'web', number: 42 }, id: 'I_1', title: 't', body: 'b',
+    state: 'OPEN', status: 'In progress', projectItemId: 'PVTI_1',
+    parent: null, epic: null, blockedBy: [{ owner: 'acme', repo: 'web', number: 5 }],
+  }
+
+  it('passes the status and each resolved blocker to the provider', async () => {
+    const create = vi.fn().mockResolvedValue(created)
+    const resolveRef = vi.fn(async (token: string) => parseRef(token))
+    await dispatch(
+      makeProvider({ create }), 'item_create',
+      { repo: 'acme/web', title: 't', body: 'b', status: 'In progress', blockedBy: ['acme/web#5'] },
+      { dryRun: false, resolveRef, logWrite: () => {} },
+    )
+    expect(resolveRef).toHaveBeenCalledWith('acme/web#5')
+    expect(create).toHaveBeenCalledWith({
+      owner: 'acme', repo: 'web', title: 't', body: 'b',
+      status: 'In progress', blockedBy: [{ owner: 'acme', repo: 'web', number: 5 }],
+    })
+  })
+
+  it('refuses a bare number inside blockedBy and creates nothing', async () => {
+    const create = vi.fn()
+    await expect(dispatch(
+      makeProvider({ create }), 'item_create',
+      { repo: 'acme/web', title: 't', body: 'b', blockedBy: [60] },
+      { dryRun: false, logWrite: () => {} },
+    )).rejects.toThrow(BareRefError)
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('refuses a blockedBy that is not an array', async () => {
+    await expect(dispatch(
+      makeProvider(), 'item_create',
+      { repo: 'acme/web', title: 't', body: 'b', blockedBy: 'acme/web#5' },
+      { dryRun: false, logWrite: () => {} },
+    )).rejects.toThrow(InvalidArgumentError)
+  })
+
+  it('refuses an empty status rather than treating it as the default', async () => {
+    await expect(dispatch(
+      makeProvider(), 'item_create',
+      { repo: 'acme/web', title: 't', body: 'b', status: '' },
+      { dryRun: false, logWrite: () => {} },
+    )).rejects.toThrow(InvalidArgumentError)
+  })
+
+  it('omits both keys when neither is asked for', async () => {
+    const create = vi.fn().mockResolvedValue(created)
+    await dispatch(
+      makeProvider({ create }), 'item_create', { repo: 'acme/web', title: 't', body: 'b' },
+      { dryRun: false, logWrite: () => {} },
+    )
+    expect(create.mock.calls[0]![0]).not.toHaveProperty('status')
+    expect(create.mock.calls[0]![0]).not.toHaveProperty('blockedBy')
+  })
+
+  it('advertises both, optional, and stops saying it always sets todo', () => {
+    const tool = TOOLS.find((t) => t.name === 'item_create')!
+    const props = tool.inputSchema.properties as Record<string, { type?: string; description?: string }>
+    expect(props.status?.type).toBe('string')
+    expect(props.blockedBy?.type).toBe('array')
+    expect(props.blockedBy?.description).toMatch(/owner\/repo#number/)
+    expect(tool.inputSchema.required).not.toContain('status')
+    expect(tool.inputSchema.required).not.toContain('blockedBy')
+    expect(tool.description).toMatch(/blocked/i)
+    expect(tool.description).not.toMatch(/set it to the board's todo status, and/)
+  })
+})

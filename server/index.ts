@@ -73,9 +73,9 @@ export const TOOLS = [
   {
     name: 'item_create',
     description:
-      'Create an issue, add it to the board, set it to the board\'s todo status, and optionally ' +
-      'file it under a parent epic, so the new item is one board_next can return without a ' +
-      'second call. Every step is verified, and if one fails it reports loudly which of them ' +
+      "Create an issue, add it to the board, and set its status — the board's todo status unless " +
+      '`status` names another — then optionally file it under a parent epic and mark it blocked ' +
+      'by other items. Every step is verified, and if one fails it reports loudly which of them ' +
       'landed and which did not.',
     inputSchema: {
       type: 'object',
@@ -86,6 +86,15 @@ export const TOOLS = [
         parent: {
           type: 'string',
           description: 'Optional epic to file this under, as owner/repo#number.',
+        },
+        status: {
+          type: 'string',
+          description: "Optional board status to file it in, by exact name. Defaults to the board's todo status.",
+        },
+        blockedBy: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional items this one is blocked by, each as owner/repo#number.',
         },
       },
       required: ['repo', 'title', 'body'],
@@ -378,6 +387,28 @@ export async function dispatch(
           ? undefined
           : await resolveRef(refArgument(name, 'parent', args.parent))
 
+      // Optional, but never optional-empty: `status: ""` is refused rather than quietly meaning
+      // the default, the same rule board_next's filters follow.
+      const status =
+        args.status === undefined || args.status === null
+          ? undefined
+          : requiredString(name, 'status', args.status)
+
+      // Each element through refArgument, so `blockedBy: [60]` raises BareRefError exactly as
+      // `parent: 60` does — a bare number names a different blocker in every repository.
+      let blockedBy: WorkItemRef[] | undefined
+      if (args.blockedBy !== undefined && args.blockedBy !== null) {
+        if (!Array.isArray(args.blockedBy)) {
+          throw new InvalidArgumentError(
+            name, 'blockedBy', 'an array of references like acme/web#278', args.blockedBy,
+          )
+        }
+        blockedBy = []
+        for (const token of args.blockedBy) {
+          blockedBy.push(await resolveRef(refArgument(name, 'blockedBy', token)))
+        }
+      }
+
       const created = await provider.create({
         owner,
         repo: repoName,
@@ -387,6 +418,8 @@ export async function dispatch(
         // or test asserting on the input it was handed should see the key absent when no epic was
         // asked for, not present and undefined.
         ...(parent ? { parent } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(blockedBy && blockedBy.length > 0 ? { blockedBy } : {}),
       })
       logMutation(
         {
