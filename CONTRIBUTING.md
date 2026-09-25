@@ -31,16 +31,18 @@ has the full list and the reasons.
 
 ## Picking something up
 
-Work is tracked on the [armature board](https://github.com/users/ryanlindsey/projects/1). Issues
-labelled `help wanted` or `good first issue` are open for outside contributions; the harness
-ports under ryanlindsey/armature#30 are the main ones, labelled `harness:<id>` and `tier-1` or
-`tier-2` by the tier they target.
+Issues labelled
+[`help wanted`](https://github.com/ryanlindsey/armature/issues?q=is%3Aopen+label%3A%22help+wanted%22)
+or [`good first issue`](https://github.com/ryanlindsey/armature/issues?q=is%3Aopen+label%3A%22good+first+issue%22)
+are open for outside contributions; the harness ports under ryanlindsey/armature#30 are the main
+ones, labelled `harness:<id>` and `tier-1` or `tier-2` by the tier they target.
 
 To claim an issue, comment on it saying you are taking it. That is the whole mechanism — a
-maintainer will assign it to you and move it to In Progress. If an issue says
+maintainer will assign it to you and move it to In Progress on the project board they track work
+on. If an issue says
 "Depends on `owner/repo#N`", check that item is done first; the prerequisite is real.
 
-For anything not already on the board, open an issue before a pull request so the approach can be
+For anything without an issue yet, open an issue before a pull request so the approach can be
 agreed before the work is done. Every template asks for references as `owner/repo#number`, not
 `#number`: numbers repeat across the repositories one board tracks, and that collision is the
 problem armature exists to solve.
@@ -62,8 +64,8 @@ Integration tests are skipped by default because they need a real board and a re
 - **A Conventional Commit title**, as `type(scope): summary`. Pull requests are squash-merged, so
   the title becomes the commit subject release-please reads to decide the version bump and write
   the changelog. A title without a recognized type ships nothing and says nothing about why. The
-  types are the ones in [`release-please-config.json`](./release-please-config.json): `feat` and
-  `fix` bump the version; `docs`, `deps`, `refactor`, `chore`, `ci` and `test` do not.
+  types are the ones in [`release-please-config.json`](./release-please-config.json): `feat`,
+  `fix` and `perf` bump the version; `docs`, `deps`, `refactor`, `chore`, `ci` and `test` do not.
 - **A closing reference**: `Closes ryanlindsey/armature#<number>`.
 - **A green suite**: `npm test` and `npm run typecheck`, plus a rebuilt and committed
   `dist/server.js` if you touched `server/**`.

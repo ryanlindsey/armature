@@ -588,9 +588,8 @@ describe('a contributor can find the rules before CI teaches them', () => {
     // A template whose frontmatter GitHub cannot read is silently dropped from the chooser.
     for (const file of ['bug_report.md', 'feature_request.md', 'harness_support.md']) {
       it(`gives ${file} the name and about GitHub needs to list it`, () => {
-        const fm = exists(`.github/ISSUE_TEMPLATE/${file}`)
-          ? frontmatter(readText(`.github/ISSUE_TEMPLATE/${file}`))
-          : ''
+        expect(exists(`.github/ISSUE_TEMPLATE/${file}`), `${file} is missing`).toBe(true)
+        const fm = frontmatter(readText(`.github/ISSUE_TEMPLATE/${file}`))
         expect(fm).toMatch(/^name: .+$/m)
         expect(fm).toMatch(/^about: .+$/m)
       })

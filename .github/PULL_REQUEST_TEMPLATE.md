@@ -16,6 +16,7 @@ Closes ryanlindsey/armature#
 - [ ] `npm test` and `npm run typecheck` pass locally
 - [ ] If `server/**` changed: ran `npm run build` and committed `dist/server.js` in this change
 - [ ] If the README, the skill, a command or a workflow changed: ran `npm test` anyway — `tests/packaging.test.ts` asserts on prose
+- [ ] If a GraphQL document changed: exported it and added it to `tests/integration/queries.integration.test.ts` — unit tests accept any document
 - [ ] Anything that looked unfinished was checked against `docs/superpowers/follow-ups.md` first
 
 ## Harness port
@@ -35,8 +36,9 @@ cannot be merged.
 <details>
 <summary><code>scripts/conformance</code> output</summary>
 
+<!-- Paste the full output between the fences. -->
+
 ```
-<!-- paste the full output here -->
 ```
 
 </details>
