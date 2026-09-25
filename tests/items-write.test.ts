@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
+import { NoSuchEntryError, parseChecklist } from '../server/providers/github/checklist.js'
+import type { GitHubClient } from '../server/providers/github/client.js'
 import {
+  checkEntries,
   claim,
+  type ItemReader,
   NotOnBoardError,
   setStatus,
   StaleItemError,
@@ -211,5 +215,196 @@ describe('claim', () => {
     const client = { graphql: vi.fn() } as any
 
     await expect(claim(client, board, snapshot, ref, { read })).rejects.toThrow(NotOnBoardError)
+  })
+})
+
+describe('checkEntries', () => {
+  const REF = { owner: 'acme', repo: 'web', number: 7 }
+
+  // One harness for every case below. `body` is the live issue body: the fake read derives its
+  // checklist from it, and the fake write replaces it, so a read-back sees what a write left.
+  function harness(initial: string, opts: { swallowWrite?: boolean; offBoard?: boolean } = {}) {
+    const sent: { query: string; variables: Record<string, unknown> }[] = []
+    let body = initial
+    const read: ItemReader = async () => ({
+      ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
+      status: opts.offBoard ? null : 'Todo', projectItemId: opts.offBoard ? null : 'PVTI_1',
+      parent: null, epic: null, blockedBy: [],
+      checklist: parseChecklist(body),
+    })
+    const client = {
+      graphql: async (query: string, variables: Record<string, unknown>) => {
+        sent.push({ query, variables })
+        if (!opts.swallowWrite) body = variables.body as string
+        return {}
+      },
+    } as unknown as GitHubClient
+    return { client, read, sent, body: () => body }
+  }
+
+  const TWO = ['## Acceptance', '- [ ] first', '- [ ] second'].join('\n')
+
+  it('writes the transformed body and verifies every requested entry by reading back', async () => {
+    const { client, read, sent } = harness(TWO)
+
+    const after = await checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read })
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.variables).toEqual({ issue: 'I_1', body: TWO.replace('- [ ] first', '- [x] first') })
+    expect(after.checklist.find((e) => e.text === 'first')!.checked).toBe(true)
+    expect(after.checklist.find((e) => e.text === 'second')!.checked).toBe(false)
+  })
+
+  it('unticks as well as ticks', async () => {
+    const { client, read, body } = harness(['- [x] first', '- [X] second'].join('\n'))
+
+    await checkEntries(client, board, REF, [
+      { text: 'first', checked: false },
+      { text: 'second', checked: false },
+    ], { read })
+
+    expect(body()).toBe(['- [ ] first', '- [ ] second'].join('\n'))
+  })
+
+  it('sends no mutation at all when every requested state already holds', async () => {
+    const { client, read, sent } = harness(['- [x] first', '- [ ] second'].join('\n'))
+
+    const after = await checkEntries(client, board, REF, [
+      { text: 'first', checked: true },
+      { text: 'second', checked: false },
+    ], { read })
+
+    expect(sent).toHaveLength(0)
+    expect(after.checklist[0]!.checked).toBe(true)
+  })
+
+  it('still verifies by reading back when it sends nothing', async () => {
+    const { client, sent } = harness('- [ ] first')
+    let reads = 0
+    const flipping: ItemReader = async () => {
+      // The first read sees the box ticked; by the read-back someone has unticked it.
+      const body = reads++ === 0 ? '- [x] first' : '- [ ] first'
+      return {
+        ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        checklist: parseChecklist(body),
+      }
+    }
+
+    await expect(
+      checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read: flipping }),
+    ).rejects.toThrow(UnverifiedWriteError)
+    expect(sent).toHaveLength(0)
+  })
+
+  it('sends no mutation when one entry in the batch is unmatched', async () => {
+    const { client, read, sent } = harness(TWO)
+
+    await expect(
+      checkEntries(client, board, REF, [
+        { text: 'first', checked: true },
+        { text: 'nope', checked: true },
+      ], { read }),
+    ).rejects.toThrow(NoSuchEntryError)
+
+    expect(sent).toHaveLength(0)
+  })
+
+  it('raises UnverifiedWriteError naming the entry when the read-back disagrees', async () => {
+    // swallowWrite: the mutation is accepted and changes nothing, which is exactly the shape of a
+    // write that lands somewhere other than where it was aimed.
+    const { client, read } = harness(TWO, { swallowWrite: true })
+
+    const error = await checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(error).toBeInstanceOf(UnverifiedWriteError)
+    expect(error!.message).toContain('acme/web#7')
+    expect(error!.message).toContain('[x] first')
+    expect(error!.message).toContain('[ ] first')
+    // A body write is not a board write: the advice must not claim the board is unchanged.
+    expect(error!.message).not.toMatch(/board as unchanged/)
+    expect(error!.message).toMatch(/item_get/)
+  })
+
+  it('names an entry the read-back no longer holds at all', async () => {
+    const { client, sent } = harness('- [ ] first')
+    let reads = 0
+    const vanishing: ItemReader = async () => {
+      const body = reads++ === 0 ? '- [ ] first' : '- [x] renamed'
+      return {
+        ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        checklist: parseChecklist(body),
+      }
+    }
+
+    const error = await checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read: vanishing })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(sent).toHaveLength(1)
+    expect(error).toBeInstanceOf(UnverifiedWriteError)
+    expect(error!.message).toContain('shows "no such entry"')
+  })
+
+  it('refuses a read-back that now holds the entry twice, rather than trusting the first', async () => {
+    const { client, sent } = harness('- [ ] first')
+    let reads = 0
+    const doubling: ItemReader = async () => {
+      // A concurrent edit adds a second "first" before the read-back; the ticked one comes first.
+      const body = reads++ === 0 ? '- [ ] first' : '- [x] first\n- [ ] first'
+      return {
+        ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        checklist: parseChecklist(body),
+      }
+    }
+
+    const error = await checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read: doubling })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(sent).toHaveLength(1)
+    expect(error).toBeInstanceOf(UnverifiedWriteError)
+    expect(error!.message).toContain('2 entries with this text')
+  })
+
+  it('computes and reports without sending under dryRun', async () => {
+    const { client, read, sent } = harness(TWO)
+
+    const after = await checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read, dryRun: true })
+
+    expect(sent).toHaveLength(0)
+    expect(after.body).toBe(TWO.replace('- [ ] first', '- [x] first'))
+    expect(after.checklist.find((e) => e.text === 'first')!.checked).toBe(true)
+  })
+
+  // The body write is an ordinary issue mutation, so GitHub would accept it for any issue the
+  // credential can edit. The board is what scopes armature's writes, and setStatus/claim refuse an
+  // off-board item the same way. Checked before applyChecks, so it wins over an unmatched entry.
+  it.each([
+    ['for real', false],
+    ['under dryRun', true],
+  ])('refuses to write to an item that is not on the board, %s', async (_label, dryRun) => {
+    const { client, read, sent, body } = harness(TWO, { offBoard: true })
+
+    await expect(
+      checkEntries(client, board, REF, [{ text: 'first', checked: true }], { read, dryRun }),
+    ).rejects.toThrow(NotOnBoardError)
+
+    expect(sent).toHaveLength(0)
+    expect(body()).toBe(TWO)
+  })
+
+  it('raises the same error under dryRun as it does for real', async () => {
+    const { client, read, sent } = harness(TWO)
+
+    await expect(
+      checkEntries(client, board, REF, [{ text: 'nope', checked: true }], { read, dryRun: true }),
+    ).rejects.toThrow(NoSuchEntryError)
+
+    expect(sent).toHaveLength(0)
   })
 })

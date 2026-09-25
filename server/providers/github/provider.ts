@@ -1,10 +1,17 @@
 import type { BoardRef, BoardSource } from '../../config.js'
 import type { WorkItemRef } from '../../ref.js'
-import type { BoardItem, BoardProvider, BoardSnapshot, CreateInput, EpicSurvey } from '../types.js'
+import type {
+  BoardItem,
+  BoardProvider,
+  BoardSnapshot,
+  ChecklistRequest,
+  CreateInput,
+  EpicSurvey,
+} from '../types.js'
 import { surveyBoard } from './board.js'
 import type { GitHubClient } from './client.js'
 import { surveyEpic } from './epic.js'
-import { claim, createItem, getItem, setStatus } from './items.js'
+import { checkEntries, claim, createItem, getItem, setStatus } from './items.js'
 
 export type ProviderOptions = {
   /**
@@ -74,6 +81,17 @@ export class GitHubBoardProvider implements BoardProvider {
     const snapshot = await this.survey()
     try {
       return await setStatus(this.client, this.board, snapshot, ref, status, { dryRun: this.dryRun })
+    } finally {
+      this.invalidate()
+    }
+  }
+
+  // A checklist is not part of BoardSnapshot, so this write cannot stale the cache today. It
+  // invalidates anyway, in a `finally` like every other write: the rule is cheap to keep and
+  // expensive to reintroduce if `checklist` ever reaches the snapshot.
+  async check(ref: WorkItemRef, entries: ChecklistRequest[]): Promise<BoardItem> {
+    try {
+      return await checkEntries(this.client, this.board, ref, entries, { dryRun: this.dryRun })
     } finally {
       this.invalidate()
     }

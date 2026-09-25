@@ -1,7 +1,7 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
-import type { BoardItem, BoardSnapshot, ChecklistEntry, CreateInput } from '../types.js'
-import { codeMask, parseChecklist } from './checklist.js'
+import type { BoardItem, BoardSnapshot, ChecklistEntry, ChecklistRequest, CreateInput } from '../types.js'
+import { applyChecks, codeMask, parseChecklist } from './checklist.js'
 import { GitHubClient, GraphQLError } from './client.js'
 
 export type ItemDetail = BoardItem & {
@@ -222,10 +222,20 @@ export class StaleItemError extends Error {
 }
 
 export class UnverifiedWriteError extends Error {
-  constructor(ref: WorkItemRef, intended: string, observed: string | null) {
+  /**
+   * `advice` replaces the closing sentence, for a write whose target is not a board field. "Treat
+   * the board as unchanged" is right for a status, where the read-back is the whole truth, and
+   * wrong for an issue body, which a write may have rewritten even when the read-back disagrees.
+   */
+  constructor(
+    ref: WorkItemRef,
+    intended: string,
+    observed: string | null,
+    advice = 'Treat the board as unchanged and investigate before retrying.',
+  ) {
     super(
       `Set ${formatRef(ref)} to "${intended}" but reading it back shows "${observed ?? 'unset'}". ` +
-        `Treat the board as unchanged and investigate before retrying.`,
+        advice,
     )
     this.name = 'UnverifiedWriteError'
   }
@@ -236,6 +246,14 @@ mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){
   updateProjectV2ItemFieldValue(input:{
     projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}
   }){ projectV2Item { id } }
+}`
+
+// Exported for tests/integration/queries.integration.test.ts. A fake client accepts any document,
+// so a query GitHub rejects passes the whole unit suite; only that file sends it to the real
+// schema.
+export const UPDATE_ISSUE_BODY = `
+mutation($issue:ID!,$body:String!){
+  updateIssue(input:{id:$issue,body:$body}){ issue{ id } }
 }`
 
 export async function setStatus(
@@ -317,6 +335,67 @@ export async function claim(
     dryRun: options.dryRun,
     read: options.read,
   })
+}
+
+/**
+ * Set the state of checklist entries on an item's body.
+ *
+ * The body is read here rather than taken from the caller, and that is the whole concurrency
+ * story. GitHub has no per-entry API and updateIssue accepts no If-Match, so this is a
+ * read-modify-write on prose a person also edits. Reading immediately before writing means an
+ * edit made elsewhere in the body is preserved rather than clobbered, and an edit to a
+ * criterion's own text fails loud through applyChecks instead of writing to the wrong line.
+ * The residual read-to-write race is unpreventable; it is caught by the read-back below, not
+ * prevented.
+ *
+ * The mutation is skipped entirely when no state differs, so an all-idempotent batch is two
+ * reads and no write. The read-back still runs: "already held" is a claim about the first read,
+ * and is verified like any other.
+ */
+export async function checkEntries(
+  client: GitHubClient,
+  board: BoardRef,
+  ref: WorkItemRef,
+  requests: ChecklistRequest[],
+  options: { dryRun?: boolean; read?: ItemReader } = {},
+): Promise<ItemDetail> {
+  const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
+
+  const before = await read(ref)
+  // updateIssue would rewrite any issue this credential can edit; the board is what scopes
+  // armature's writes, so an off-board item is refused here exactly as setStatus refuses it.
+  // This and applyChecks run on both paths, above the dry-run branch, so a dry run raises exactly
+  // what a real run would. A dry-run prediction that does not match the real path is the
+  // recurring bug here.
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
+  const { body, changed } = applyChecks(ref, before.body, requests)
+
+  if (options.dryRun) return { ...before, body, checklist: parseChecklist(body) }
+
+  if (changed > 0) await client.graphql(UPDATE_ISSUE_BODY, { issue: before.id, body })
+
+  const after = await read(ref)
+  const box = (checked: boolean) => (checked ? '[x]' : '[ ]')
+  for (const request of requests) {
+    // Every match, not the first: a concurrent edit that duplicates the text leaves the read-back
+    // unable to say which line the write reached, which applyChecks calls ambiguous before writing.
+    const matches = after.checklist.filter((e) => e.text === request.text)
+    const entry = matches.length === 1 ? matches[0]! : null
+    if (!entry || entry.checked !== request.checked) {
+      throw new UnverifiedWriteError(
+        ref,
+        `${box(request.checked)} ${request.text}`,
+        entry
+          ? `${box(entry.checked)} ${entry.text}`
+          : matches.length === 0
+            ? 'no such entry'
+            : `${matches.length} entries with this text`,
+        `The body ${changed > 0 ? 'was sent, and may or may not have landed' : 'was not rewritten'}. ` +
+          `Run item_get on ${formatRef(ref)} to see its checklist as it stands before retrying.`,
+      )
+    }
+  }
+  return after
 }
 
 export class OrphanedIssueError extends Error {
