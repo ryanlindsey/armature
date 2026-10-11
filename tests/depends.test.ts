@@ -37,6 +37,7 @@ describe('parseDependsOn', () => {
     ['other phrasing', 'blocked by `acme/web#1`'],
     ['issue zero', 'Depends on `acme/web#0`'],
     ['trailing prose', 'Depends on `acme/web#1`, then ship'],
+    ['a number past the safe-integer range', 'Depends on `acme/web#9007199254740993`'],
   ])('ignores %s', (_why, body) => {
     expect(parseDependsOn(body)).toEqual([])
   })
@@ -136,6 +137,11 @@ describe('syncDependsOn', () => {
       added: [],
       removed: [web1],
     })
+  })
+
+  it('removing a final line without an ending leaves the previous line ending in place', () => {
+    // "Removes it and its line ending; nothing else changes": the line had none to remove.
+    expect(syncDependsOn(`Intro\n${line(web1)}`, []).body).toBe('Intro\n')
   })
 
   it('repairs drift both ways in one call', () => {

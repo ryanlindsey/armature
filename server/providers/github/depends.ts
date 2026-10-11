@@ -160,7 +160,10 @@ function canonicalRef(text: string, isCode: boolean): WorkItemRef | null {
   if (isCode) return null
   const match = CANONICAL.exec(text.trim())
   if (!match) return null
-  return { owner: match[1]!, repo: match[2]!, number: Number(match[3]!) }
+  // Past 2^53 the number is not the one written, and would not round-trip through dependsOnLine.
+  const number = Number(match[3]!)
+  if (!Number.isSafeInteger(number)) return null
+  return { owner: match[1]!, repo: match[2]!, number }
 }
 
 function refKey(ref: WorkItemRef): string {
