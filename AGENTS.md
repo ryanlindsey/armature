@@ -99,6 +99,16 @@ a stderr the MCP client discards. Never hoist config resolution back above `serv
   (`StaleItemError`). A half-landed `item_create` gets its own error per end state —
   `OrphanedIssueError` (off the board) vs `StatuslessItemError` (on it, status unconfirmed).
   New mutations follow the same shape; don't add an unverified one.
+- **`item_link` and `item_update` never leave links and `Depends on` prose disagreeing without
+  raising.** `board_next` ignores `blockedBy`; the skill's prerequisite check reads the prose, so a
+  missing line is what lets work be claimed early. `server/providers/github/depends.ts` defines the
+  canonical line — exactly ``Depends on `owner/repo#N` ``, alone on its line, one ref per line,
+  outside code blocks — and nothing else is read as a dependency. `item_link` owns the canonical
+  `Depends on` line: it writes one for every blocker it adds, removes one for every blocker it
+  removes, and repairs drift on the rest, raising `ProseOutOfStepError` if the prose write does not
+  land. `item_update` refuses a body whose canonical set disagrees with the links
+  (`DependsOnDriftError`), so prose can only move toward the links. `item_create` does not check
+  its body against `blockedBy`; `filing-a-plan` writes both.
 - **Dry-run results must be marked and must not invent data.** `presentMutation` adds
   `dryRun: true`; `presentCreated` drops `ref` entirely, because a created item has no number yet
   and `acme/web#0` reads as real. A dry-run prediction that doesn't match the real path is the
