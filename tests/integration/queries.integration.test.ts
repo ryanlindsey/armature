@@ -7,8 +7,12 @@ import { GitHubClient } from '../../server/providers/github/client.js'
 import {
   ADD_BLOCKED_BY,
   ADD_SUB_ISSUE,
+  ISSUE_IDENTITY,
   ITEM_QUERY,
   PARENT_ID,
+  REMOVE_BLOCKED_BY,
+  REMOVE_SUB_ISSUE,
+  SET_PARENT,
   UPDATE_ISSUE,
   UPDATE_ISSUE_BODY,
 } from '../../server/providers/github/items.js'
@@ -73,6 +77,24 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
       number: content.number,
     })
     expect(data.repository?.issue?.id).toMatch(/^I_/)
+  })
+
+  it('accepts ISSUE_IDENTITY against the live schema and returns the issue\'s own repository', async () => {
+    const board = await (await client()).graphql<any>(BOARD_QUERY, { owner: owner!, number, cursor: null })
+    const content = board.repositoryOwner?.projectV2?.items?.nodes?.find(
+      (n: any) => n?.content?.number != null,
+    )?.content
+    expect(content, 'the integration board must hold at least one issue').toBeDefined()
+
+    // Upper-cased on purpose: linkItem relies on the answer carrying GitHub's spelling, not this one.
+    const data = await (await client()).graphql<any>(ISSUE_IDENTITY, {
+      owner: content.repository.owner.login.toUpperCase(),
+      name: content.repository.name.toUpperCase(),
+      number: content.number,
+    })
+    expect(data.repository?.issue?.id).toMatch(/^I_/)
+    expect(data.repository?.issue?.repository?.owner?.login).toBe(content.repository.owner.login)
+    expect(data.repository?.issue?.repository?.name).toBe(content.repository.name)
   })
 
   it('accepts EPIC_ENRICHMENT against the live schema', async () => {
@@ -177,4 +199,22 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
     expect(error!.message).toMatch(/could not resolve to a node/i)
     expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
   })
+
+  // The three documents linkItem adds, checked exactly as ADD_SUB_ISSUE is: unresolvable ids reach
+  // execution only if the document validated, and nothing is linked, unlinked or moved.
+  for (const [name, doc, vars] of [
+    ['REMOVE_BLOCKED_BY', REMOVE_BLOCKED_BY, { blocked: 'I_kwDOAAAAAAAAAAAAAAAAAA', blocker: 'I_kwDOAAAAAAAAAAAAAAAAAA' }],
+    ['SET_PARENT', SET_PARENT, { parent: 'I_kwDOAAAAAAAAAAAAAAAAAA', child: 'I_kwDOAAAAAAAAAAAAAAAAAA' }],
+    ['REMOVE_SUB_ISSUE', REMOVE_SUB_ISSUE, { parent: 'I_kwDOAAAAAAAAAAAAAAAAAA', child: 'I_kwDOAAAAAAAAAAAAAAAAAA' }],
+  ] as const) {
+    it(`accepts ${name} against the live schema, without changing anything`, async () => {
+      const error = await (await client())
+        .graphql<any>(doc, { ...vars })
+        .then(() => null)
+        .catch((e: Error) => e)
+      expect(error, 'a mutation on unresolvable ids must not succeed').not.toBeNull()
+      expect(error!.message).toMatch(/could not resolve to a node/i)
+      expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
+    })
+  }
 })
