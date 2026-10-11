@@ -45,8 +45,11 @@ and `parent: <spec>`. No epic.
    name it. Each child is an `item_create` with:
    - `parent: <epic>`
    - `blockedBy`: the refs of the children it waits on, which you just created
-   - a body that includes a prose line `Depends on \`owner/repo#N\`` for each of them.
-     `working-the-board` still reads prerequisites from that line, so write both.
+   - a body that includes, for each of them, the canonical line ``Depends on `owner/repo#N` ``
+     in exactly that form: alone on its line, one ref per line, outside code blocks.
+     `working-the-board` still reads prerequisites from that line, so write both. Any other
+     phrasing is prose the server ignores, and `item_update` and `item_link` read only canonical
+     lines when they keep the prose in step with the links.
 
 Work too small for a spec — a bounded change, a bug fix — is one `item_create` and does not need
 this skill.
@@ -68,11 +71,28 @@ this skill.
   - `UnsequencedItemError` — status set and parent linked if one was given, but some blockers
     unconfirmed; the message names which landed.
 
-  Stop and report the error to the human. Only a `StatuslessItemError` can be repaired through
-  armature — set the status with `item_status` — and even then its parent and blockers are still
-  missing. Those, and every other repair, belong to the human: armature has no tool to add an existing
-  issue to the board, set a parent or add a blocker, and you never reach for `gh` to do it. Carry
-  on filing only once the human confirms that issue is whole, since later children may name it.
+  Stop and report the error to the human. These four, and the unknown-outcome errors below, stay
+  the human's, because the item's state is in doubt: a repair built on a guess about what landed
+  compounds it. Carry on filing only once the human confirms that issue is whole, since later
+  children may name it.
+- **Repair every other defect yourself, then report it.** A defect found during or after filing — a
+  wrong step, broken text, a missing or wrong blocker or parent — is repaired through armature, and
+  you never reach for `gh` to do it:
+  - title or body: `item_update`, with the `version` from a fresh `item_get`. On
+    `ConcurrentEditError` someone changed the item since you read it: `item_get` it again and
+    re-apply the edit to what is there now.
+  - blockers or parent: `item_link` (`addBlockedBy`, `removeBlockedBy`, `parent`, or
+    `clearParent: true`), never by editing `Depends on` lines through `item_update` — `item_link`
+    keeps those lines in step with the links, and `item_update` refuses a body that disagrees with
+    them (`DependsOnDriftError`).
+  - when `item_link` raises, its message says what landed. `PartialLinkError`: run `item_get`,
+    then repeat the same `item_link` call. `ProseOutOfStepError`: the links are right and the
+    prose is not — `item_get`, then `item_update` with lines matching `blockedBy`.
+    `MissingLinkTargetError`: nothing changed — fix the ref.
+  - never edit a `Spec:` item's body or give a spec a blocker, which would write prose into it;
+    report the defect instead.
+
+  Every repair goes in the report's Board repairs section.
 - **Some errors mean nothing was created.** A message saying nothing was created —
   `UnknownStatusError` (status names match exactly, including case), `MissingParentError`,
   `MissingBlockerError` — or an argument refusal such as `BareRefError` ("is not a work item
@@ -85,7 +105,13 @@ this skill.
   first write, report the rest as planned, and stop.
 - **Bodies go through `body` directly.** No scratch files, and never `gh` to read or write the
   board. If the armature tools are unavailable, STOP and say so.
+- **Bodies travel as JSON strings, so escapes are decoded.** A backslash escape such as `\uXXXX`
+  in a `body` is decoded before GitHub sees it, which can blank or corrupt the text. Write the
+  literal character, or spell a code point as `U+XXXX`.
 - **Report what was filed.** End with the spec, the epic if there is one, and each child, as refs,
-  with each child's blockers.
+  with each child's blockers. Then a **Board repairs** section: one line per changed item, the ref
+  then what changed — `title`, `body: <one-line description>`, `+blocker owner/repo#N`,
+  `-blocker owner/repo#N`, `parent → owner/repo#N` or `parent cleared`, and `drift repaired` where
+  `item_link` reconciled the prose. Write "none" if nothing was repaired.
 - **Closing is the human's.** Armature never closes a spec or an epic. The run that finishes the
   work reminds them.

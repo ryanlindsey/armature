@@ -105,6 +105,8 @@ record's rulings. For that child:
    - on a re-dispatch of an interrupted child, that this run already claimed it — skip
      `item_claim`, which would refuse an item no longer in todo — and that an existing
      `issue-<number>-*` branch or worktree for it is its own to inspect and continue;
+   - on a dispatch of a child an earlier dispatch released to todo, that it claims again, and that
+     its existing `issue-<number>-*` branch is its own to find and rebase onto this base;
    - the worktree answer from the setup step;
    - the instruction to use `armature:working-the-board` for that one item;
    - **the prerequisite ruling:** inside this run a prerequisite is satisfied when its work is
@@ -115,13 +117,19 @@ record's rulings. For that child:
      implementing**;
    - that if verify is red, it stops before opening the PR and reports that instead;
    - the reporting contract: PR url, head branch, **files touched**, criteria settled, the verify
-     outcome, how many review rounds it took with any finding still open, and whether it stopped
-     without claiming and why.
+     outcome, how many review rounds it took with any finding still open, whether it stopped
+     without claiming and why, and **repairs** — its Board repairs lines, every item it changed
+     through `item_update` or `item_link` and every defect it reported instead, or "none";
+   - that a dependency it discovers mid-work is judged by the prerequisite ruling above, not by
+     board status, and that if the ruling stops it, it reports the blocker it added, the branch
+     holding its work in progress, and that it released the child to todo.
 3. **Adjudicate.** Record the report in the run record. If it carries a red flag, stop and ask.
    Otherwise continue.
 4. **Loop**, starting again from `epic_survey`.
 
-When no child is left actionable, stop and report the whole stack with its merge order. `item_get`
+When no child is left actionable, stop and report the whole stack with its merge order. The final
+report ends with a **Board repairs** section collecting every child's repairs, as each reported
+them, worked items apart from other items — or "none". `item_get`
 the epic; if it has a `parent`, `item_get` that too, and if its title starts `Spec:`, end the report
 with:
 "after the stack merges, close the epic, then the spec" — naming both refs. Armature closes neither.
@@ -160,6 +168,14 @@ merge order, and what needs a person.
   so is anything blocked by it. One inside this epic that is not yet worked only defers it — skip
   it this iteration, unrecorded, and come back once the blocker has a PR. That is a ruling, not a red flag, and it
   feeds the terminal condition.
+- **A dependency discovered mid-child is a ruling, not a red flag.** The child adds the
+  blocker with `item_link` and reports it under repairs. The discovery then goes through
+  the prerequisite rule above, unchanged: an in-epic blocker whose work is reachable from the base
+  lets the child continue; an unworked in-epic blocker defers the child, unrecorded — it commits
+  its work in progress, releases itself to todo and stops without a PR — and you come back once the
+  blocker has a PR; an out-of-epic blocker stops the child, recorded and skipped. A child released
+  to todo with a work-in-progress branch is picked up later by finding its own branch and rebasing
+  it onto the base you name, and stacking means its base may now be the blocker's head branch.
 - **Never claim a child that needs a person.** Claiming asserts armature is working it, which is
   false. Leave it in the board's todo status, record it, skip it, and carry on to the next
   actionable child. When skipping leaves nothing actionable — the rest need a person, or are

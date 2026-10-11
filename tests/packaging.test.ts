@@ -885,3 +885,122 @@ describe('the README documents filing a plan', () => {
     expect(readme).toMatch(/`board_next`[^\n]*`Spec:`[^\n]*`Epic:`/)
   })
 })
+
+// ryanlindsey/armature#100: item_update and item_link exist, so a defect found on the board is
+// repaired through armature's verified writes and reported, rather than handed to the human or
+// patched with `gh`. Nothing but these skills' text decides which defects to fix and when to stop.
+describe('the filing skill repairs through armature, and reports it', () => {
+  const skill = readText('skills/filing-a-plan/SKILL.md')
+  const rules = section(skill, 'Rules')
+
+  it('repairs with item_update and item_link, never gh', () => {
+    expect(rules).toMatch(/item_update/)
+    expect(rules).toMatch(/item_link/)
+    expect(rules).toMatch(/never[^.]*`gh`/i)
+  })
+
+  // The item's state is in doubt after a partial create; a repair on top of a guess compounds it.
+  it('still gives the partial-create errors to the human', () => {
+    expect(rules).toMatch(/OrphanedIssueError[\s\S]*human/)
+    expect(rules).toMatch(/stay\s+the human's/i)
+  })
+
+  // The incident behind the spec: \uXXXX in a body's JSON string blanked an epic.
+  it('warns that escapes in a body are decoded, and to write U+XXXX', () => {
+    expect(rules).toMatch(/decoded/i)
+    expect(rules).toMatch(/U\+XXXX/)
+  })
+
+  it('files children with the canonical Depends on line', () => {
+    expect(skill).toMatch(/Depends on `owner\/repo#N`[^\n]*\n?[^\n]*canonical|canonical[\s\S]{0,200}Depends on `owner\/repo#N`/)
+  })
+
+  it('reports repairs in a Board repairs section', () => {
+    expect(rules).toMatch(/Report what was filed[\s\S]*Board repairs/)
+  })
+})
+
+describe('working-the-board repairs any open item, and reports it', () => {
+  const skill = readText('skills/working-the-board/SKILL.md')
+  const rules = section(skill, 'Rules')
+
+  it('repairs through item_update with a fresh version, and item_link for links', () => {
+    expect(rules).toMatch(/item_update/)
+    expect(rules).toMatch(/`version`/)
+    expect(rules).toMatch(/ConcurrentEditError/)
+    expect(rules).toMatch(/item_link/)
+  })
+
+  it('reports a closed or done item rather than editing it', () => {
+    expect(rules).toMatch(/closed or done[^.]*reported, not edited/i)
+  })
+
+  it('never edits a Spec: body or gives a spec a blocker', () => {
+    expect(rules).toMatch(/[Nn]ever edit a `Spec:`[^.]*body[^.]*blocker/)
+  })
+
+  it('names the Board repairs format', () => {
+    expect(rules).toMatch(/Board repairs/)
+    for (const token of ['+blocker', '-blocker', 'parent cleared', 'drift repaired']) {
+      expect(rules).toContain(token)
+    }
+  })
+
+  it('puts Board repairs in the PR body and the session report', () => {
+    const loop = section(skill, 'The loop')
+    expect(loop).toMatch(/9\. \*\*Open a PR\.\*\*[\s\S]*Board repairs[\s\S]*10\. /)
+    expect(loop).toMatch(/10\. \*\*Hand back\.\*\*[\s\S]*Board repairs/)
+  })
+
+  // The spec's decision: a dependency found mid-work stops the work, and nothing is lost.
+  it('stops and releases an item on a dependency found mid-work, without a PR', () => {
+    const midWork = /\*\*A dependency found mid-work[\s\S]*?(?=\n- \*\*)/.exec(rules)
+    expect(midWork, 'expected a "A dependency found mid-work" rule').not.toBeNull()
+    expect(midWork![0]).toMatch(/item_link/)
+    expect(midWork![0]).toMatch(/semantics\.todo/)
+    expect(midWork![0]).toMatch(/item_status/)
+    expect(midWork![0]).toMatch(/without (pushing|a PR)[\s\S]*(no PR|without (a|opening a) PR)/i)
+    expect(midWork![0]).toMatch(/rebase/i)
+  })
+})
+
+describe('working-an-epic carries repairs through the child report', () => {
+  const skill = readText('skills/working-an-epic/SKILL.md')
+
+  it('asks each child to report its repairs', () => {
+    expect(section(skill, 'The loop')).toMatch(/reporting contract[\s\S]*\*\*repairs\*\*/)
+  })
+
+  it('collects every child\'s repairs under Board repairs in the final report', () => {
+    expect(section(skill, 'The loop')).toMatch(/final\s+report[\s\S]*Board repairs/i)
+  })
+
+  it('treats a dependency found mid-child as a ruling, not a red flag', () => {
+    const rules = section(skill, 'Rules')
+    expect(rules).toMatch(/mid-child[\s\S]*a ruling, not a red flag/i)
+    expect(rules).toMatch(/its own branch[\s\S]*rebas/i)
+  })
+})
+
+describe('the work commands can reach the repair tools', () => {
+  // item_update and item_link are new tools; the wildcard is what lets the skills call them
+  // without a per-tool allowed-tools change.
+  for (const command of ['commands/armature-next.md', 'commands/armature-epic.md']) {
+    it(`${command} allows every armature tool`, () => {
+      expect(frontmatter(readText(command))).toContain('mcp__plugin_armature_armature__*')
+    })
+  }
+})
+
+describe('the README and AGENTS.md describe repairs', () => {
+  it('README says the skills repair defects and report them', () => {
+    expect(section(readText('README.md'), 'Skill')).toMatch(/repair[\s\S]*Board repairs/i)
+  })
+
+  it('AGENTS.md says item_link owns the canonical line and item_update refuses drift', () => {
+    const agents = readText('AGENTS.md')
+    expect(agents).toMatch(/depends\.ts/)
+    expect(agents).toMatch(/`item_link`[^\n]*canonical[^\n]*`Depends on`|canonical `Depends on`[^\n]*`item_link`/)
+    expect(agents).toMatch(/`item_update`[^.]*refuses/)
+  })
+})

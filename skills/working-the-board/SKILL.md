@@ -39,10 +39,12 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
 9. **Open a PR.** Use `superpowers:finishing-a-development-branch`, taking the option that pushes
    and creates a pull request — by its text, never its number; see the rule below. Title is a
    Conventional Commit. Body contains `Closes #<number>` and the acceptance receipt: each settled
-   entry with the evidence that settled it, each unsettled entry with why. **Do not merge.**
+   entry with the evidence that settled it, each unsettled entry with why. Next to the receipt goes
+   a **Board repairs** section — see the repair rule below — or "none". **Do not merge.**
 10. **Hand back.** Move the item to the board's review status with `item_status` if the board has one.
-    Report the PR link. If the item's parent — read in step 2 — is titled `Spec:`, a one-task
-    plan filed with no epic, end the report with: "after this merges, close `<spec ref>`." Then STOP.
+    Report the PR link and the Board repairs section, which the session report always carries. If
+    the item's parent — read in step 2 — is titled `Spec:`, a one-task plan filed with no epic, end
+    the report with: "after this merges, close `<spec ref>`." Then STOP.
 
 ## Without Superpowers
 
@@ -73,6 +75,47 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   not for prerequisites, since its prose describes the whole design rather than this item's order.
   The server does not check prerequisites — it reports facts and effects, and "this should wait"
   is a judgment — so this rule is the only place that check exists.
+- **A dependency found mid-work stops the work.** If work on `A` reveals that it depends on `B`,
+  add the blocker with `item_link` (`addBlockedBy: ["B"]`), which writes the `Depends on` line too.
+  Then apply the prerequisite test above: if `B` is in the board's done status, carry on. If it is
+  not, commit the work in progress on `A`'s branch without pushing, set `A` back to the board's
+  `semantics.todo` status with `item_status`, report "`A` is waiting on `B`" with the branch name
+  and the Board repairs section, and STOP — no PR is opened. When `A` is picked up again, it finds
+  its own `issue-<number>-*` branch and rebases that work onto the blocker's head branch, or onto
+  the default branch once the blocker has merged, rather than starting over.
+- **Repair any open item you find a defect in, then report it.** The item being worked, a sibling,
+  the epic, a blocker — a wrong step, broken text, a missing or wrong blocker or parent. No
+  per-edit approval, and never `gh`:
+  - title or body: `item_update`, with the `version` from a fresh `item_get`. On
+    `ConcurrentEditError` someone changed the item since you read it: `item_get` it again and
+    re-apply the edit to what is there now. `EmptyChangeError` means the edit changed nothing.
+  - blockers or parent: `item_link` (`addBlockedBy`, `removeBlockedBy`, `parent`, or
+    `clearParent: true` — `parent: null` means "not asked"), never by editing `Depends on` lines
+    through `item_update`. `item_link` keeps the canonical lines — ``Depends on `owner/repo#N` ``,
+    alone on a line, outside code blocks — in step with every blocker link, and its result's
+    `dependsOn.added`/`removed` entries beyond the refs you named are drift it repaired.
+    `item_update` refuses a body whose `Depends on` lines disagree with the links
+    (`DependsOnDriftError`): change the link with `item_link`, or make the lines match `blockedBy`.
+    Rewriting a non-canonical prerequisite ("blocked by …", several refs on a line) into canonical
+    lines is an `item_update`, with lines matching `blockedBy`.
+  - when `item_link` raises, its message says what landed. `MissingLinkTargetError` or
+    `ConflictingLinkError`: nothing changed — fix the ref or the request and call again.
+    `UnclosedFenceError`: nothing was written — close the code fence with `item_update` first.
+    `PartialLinkError`: run `item_get`, then repeat the same `item_link` call; the prose was not
+    touched. `ProseOutOfStepError`: the links are right and the prose is not — `item_get`, then
+    `item_update` with lines matching `blockedBy`. `LinkUnsupportedError`: this board cannot link;
+    report the defect instead.
+  - a **closed or done** item is reported, not edited: changing finished work's ticket rewrites
+    history.
+  - **never edit a `Spec:` item's body or give a spec a blocker**, which would write prose into it;
+    report the defect instead. Setting or clearing a spec's parent is fine.
+
+  Every repair, and every defect reported instead of repaired, goes in a **Board repairs**
+  section: in the session report always, and in the PR body next to the acceptance receipt when
+  there is a PR. It separates the worked item from other items, one line per item — the ref, then
+  what changed: `title`, `body: <one-line description>`, `+blocker owner/repo#N`,
+  `-blocker owner/repo#N`, `parent → owner/repo#N` or `parent cleared`, and `drift repaired` where
+  `item_link` reconciled the prose.
 - **`using-git-worktrees` does not get to ask for consent.** It asks before creating a worktree
   unless a preference is on record, and a missed prompt stalls the whole run. Invoking armature is
   that preference: treat consent as given and do not ask. Name the worktree `issue-<number>-<slug>`.
