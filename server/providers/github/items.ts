@@ -973,6 +973,44 @@ mutation($parent:ID!,$child:ID!){
   removeSubIssue(input:{issueId:$parent,subIssueId:$child}){ subIssue{ id } }
 }`
 
+// PARENT_ID with the issue's own repository, so linkItem can carry GitHub's spelling of a ref
+// rather than the caller's. A caller who writes `Acme/Web#3` is answered with `acme/web#3` by every
+// read-back; without this the dry run would report one spelling and the real path the other, and
+// the Depends on line written into the body would keep whichever the caller happened to type.
+// A separate document rather than a wider PARENT_ID, whose callers need only the id.
+// Exported for queries.integration.test.ts.
+export const ISSUE_IDENTITY = `
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ issue(number:$number){ id number repository{ owner{ login } name } } }
+}`
+
+/** An issue's node id and canonical ref, or null when it does not exist or is not visible. */
+async function issueIdentity(
+  client: GitHubClient,
+  ref: WorkItemRef,
+): Promise<{ id: string; ref: WorkItemRef } | null> {
+  try {
+    const found = await client.graphql<any>(ISSUE_IDENTITY, {
+      owner: ref.owner,
+      name: ref.repo,
+      number: ref.number,
+    })
+    const issue = found.repository?.issue
+    if (!issue?.id) return null
+    return {
+      id: issue.id as string,
+      ref: {
+        owner: issue.repository.owner.login as string,
+        repo: issue.repository.name as string,
+        number: issue.number as number,
+      },
+    }
+  } catch (error) {
+    if (error instanceof GraphQLError && error.types.includes('NOT_FOUND')) return null
+    throw error
+  }
+}
+
 // Knowable with no network, so raised before the first read: a call that both adds and removes
 // one ref, or links an item to itself, has no outcome armature could honestly report.
 export class ConflictingLinkError extends Error {
@@ -988,11 +1026,13 @@ export class ConflictingLinkError extends Error {
 // MissingBlockerError's twin for an existing item: resolved before any write, so a typo leaves
 // the item exactly as it was.
 export class MissingLinkTargetError extends Error {
-  constructor(ref: WorkItemRef, target: WorkItemRef, role: 'blocker' | 'parent') {
+  constructor(ref: WorkItemRef, target: WorkItemRef, role: 'blocker' | 'parent' | 'current parent') {
     const what =
       role === 'blocker'
         ? `change whether ${formatRef(ref)} is blocked by ${formatRef(target)}`
-        : `change ${formatRef(ref)}'s parent link to ${formatRef(target)}`
+        : role === 'parent'
+          ? `make ${formatRef(target)} the parent of ${formatRef(ref)}`
+          : `remove ${formatRef(ref)} from its parent ${formatRef(target)}`
     super(
       `Cannot ${what}: that issue does not exist, or is not visible to this credential. Nothing ` +
         `was changed. Check the reference.`,
@@ -1012,8 +1052,14 @@ export class PartialLinkError extends Error {
     cause: string,
   ) {
     const list = (items: string[]) => (items.length ? items.join(', ') : 'none')
+    // The opening says only what was observed: "in part" is true only when something landed.
+    const opening = landed.length
+      ? `Changed the links on ${formatRef(ref)} only in part:`
+      : unconfirmed.length
+        ? `No link change on ${formatRef(ref)} was confirmed:`
+        : `The links on ${formatRef(ref)} changed while armature was working, and this call sent nothing:`
     super(
-      `Changed the links on ${formatRef(ref)} only in part: ${cause} Confirmed: ${list(landed)}. ` +
+      `${opening} ${cause} Confirmed: ${list(landed)}. ` +
         `Not confirmed: ${list(unconfirmed)}. Its Depends on lines were not touched. item_link is ` +
         `idempotent, so calling it again with the same arguments is safe; run item_get on ` +
         `${formatRef(ref)} first to see the links as they stand.`,
@@ -1069,7 +1115,8 @@ export async function linkItem(
   // 1. No network.
   const both = add.filter((a) => has(remove, a))
   if (both.length) {
-    throw new ConflictingLinkError(ref, `${both.map(formatRef).join(', ')} is named both to add and to remove`)
+    const verb = both.length === 1 ? 'is' : 'are'
+    throw new ConflictingLinkError(ref, `${both.map(formatRef).join(', ')} ${verb} named both to add and to remove`)
   }
   if (has([...add, ...remove], ref)) {
     throw new ConflictingLinkError(ref, `an item cannot be its own blocker`)
@@ -1085,10 +1132,11 @@ export async function linkItem(
   // 3. Only the targets a write will actually need. A remove of a blocker that is not linked and a
   // parent that is already the one asked for are no-ops, and resolving them would turn a harmless
   // repeat into a refusal.
-  const resolve = async (target: WorkItemRef, role: 'blocker' | 'parent') => {
-    const id = await issueNodeId(client, target)
-    if (!id) throw new MissingLinkTargetError(ref, target, role)
-    return { ref: target, id }
+  // Each resolved target carries GitHub's spelling from here on: see ISSUE_IDENTITY.
+  const resolve = async (target: WorkItemRef, role: 'blocker' | 'parent' | 'current parent') => {
+    const found = await issueIdentity(client, target)
+    if (!found) throw new MissingLinkTargetError(ref, target, role)
+    return found
   }
   const toAdd: { ref: WorkItemRef; id: string }[] = []
   for (const a of add) if (!has(before.blockedBy, a)) toAdd.push(await resolve(a, 'blocker'))
@@ -1099,16 +1147,25 @@ export async function linkItem(
   if (change.parent && !sameRef(before.parent, change.parent)) {
     setParent = await resolve(change.parent, 'parent')
   } else if (change.parent === null && before.parent) {
-    clearParent = await resolve(before.parent, 'parent')
+    clearParent = await resolve(before.parent, 'current parent')
   }
 
-  // 4. Read-back spellings are kept for refs already linked: GitHub canonicalises owner and repo.
-  const desired = distinctRefs([...before.blockedBy.filter((b) => !has(remove, b)), ...add])
-  const targetParent = change.parent !== undefined ? change.parent : before.parent
+  // 4. In GitHub's spelling throughout, so the dry run, the prose and the read-back agree: refs
+  // already linked keep the read-back's, new ones the spelling ISSUE_IDENTITY resolved.
+  const desired = distinctRefs([
+    ...before.blockedBy.filter((b) => !has(remove, b)),
+    ...toAdd.map((t) => t.ref),
+  ])
+  const targetParent =
+    change.parent === undefined ? before.parent
+    : change.parent === null ? null
+    : (setParent?.ref ?? before.parent)
   const parentMatches = (p: WorkItemRef | null) =>
     targetParent === null ? p === null : sameRef(p, targetParent)
 
-  // Raises UnclosedFenceError before any write. See the comment above.
+  // Raises UnclosedFenceError before any write. See the comment above. Synced against the whole of
+  // `desired`, so unnamed drift in a fenced-off body refuses even a parent-only change: the call
+  // promises prose in step with every link afterwards, and could not keep that promise.
   const planned = syncDependsOn(before.body, desired)
 
   // 5.
@@ -1165,8 +1222,6 @@ export async function linkItem(
       refused.set(w, message(error))
     }
   }
-  const refusals = [...refused].map(([w, why]) => `${w.label} was refused: ${why}`)
-
   // 7.
   let mid: ItemDetail
   try {
@@ -1174,7 +1229,10 @@ export async function linkItem(
   } catch (error) {
     throw new PartialLinkError(
       ref, [], writes.map((w) => w.label),
-      `${[...refusals, `reading it back failed: ${message(error)}`].join('; ')}.`,
+      `${[
+        ...[...refused].map(([w, why]) => `${w.label} was refused: ${why}`),
+        `reading it back failed: ${message(error)}`,
+      ].join('; ')}.`,
     )
   }
   const landed = writes.filter((w) => w.landed(mid))
@@ -1184,7 +1242,11 @@ export async function linkItem(
   // nobody asked for.
   const setDiffers = !sameRefSet(mid.blockedBy, desired) || !parentMatches(mid.parent)
   if (unconfirmed.length || setDiffers) {
-    const reasons = [...refusals]
+    // Only for writes the read-back does not show: a mutation that threw and landed anyway (a
+    // timeout after GitHub committed it) is confirmed, and calling it refused would contradict that.
+    const reasons = unconfirmed
+      .filter((w) => refused.has(w))
+      .map((w) => `${w.label} was refused: ${refused.get(w)}`)
     const unshown = unconfirmed.filter((w) => !refused.has(w))
     if (unshown.length) reasons.push(`reading it back does not show ${unshown.map((w) => w.label).join(', ')}`)
     if (!unconfirmed.length) {
@@ -1198,9 +1260,8 @@ export async function linkItem(
 
   // 8. From mid.body, not before.body, so an edit made since the first read survives. An
   // UnclosedFenceError here means the body changed since that read; the links have landed, so it is
-  // the prose that is out of step.
-  // Its own message says "nothing was changed", which stopped being true when the links landed, so
-  // the cause is restated rather than passed through.
+  // the prose that is out of step. Its own message says "nothing was changed", which stopped being
+  // true when the links landed, so the cause is restated rather than passed through.
   let synced: ReturnType<typeof syncDependsOn>
   try {
     synced = syncDependsOn(mid.body, desired)
