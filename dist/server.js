@@ -17533,7 +17533,7 @@ var ITEM_QUERY = `
 query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
     issue(number:$number){
-      id number title body state
+      id number title body state updatedAt
       parent{ number repository{ owner{ login } name } }
       blockedBy(first:50){ pageInfo{ hasNextPage } nodes{ number repository{ owner{ login } name } } }
       projectItems(first:100){
@@ -17591,7 +17591,8 @@ async function getItem(client, board, ref) {
     // Parent link only — see the comment above parseEpicFromBody for why the body fallback
     // is not called here in v1.
     epic: epicFromLink,
-    blockedBy
+    blockedBy,
+    version: issue2.updatedAt
   };
 }
 var StaleItemError = class extends Error {
@@ -17811,7 +17812,8 @@ async function createItem(client, board, snapshot, input, options = {}) {
       projectItemId: "(dry-run)",
       parent: input.parent ?? null,
       epic: input.parent ?? null,
-      blockedBy: blockers
+      blockedBy: blockers,
+      version: "(dry-run)"
     };
   }
   const repo = await client.graphql(REPO_ID, { owner: input.owner, name: input.repo });

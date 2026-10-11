@@ -1,8 +1,16 @@
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
-import type { BoardItem, BoardSnapshot, ChecklistEntry, ChecklistRequest, CreateInput } from '../types.js'
+import type {
+  BoardItem,
+  BoardSnapshot,
+  ChecklistEntry,
+  ChecklistRequest,
+  CreateInput,
+  ItemChange,
+} from '../types.js'
 import { applyChecks, codeMask, parseChecklist } from './checklist.js'
 import { GitHubClient, GraphQLError } from './client.js'
+import { parseDependsOn, sameRefSet } from './depends.js'
 
 export type ItemDetail = BoardItem & {
   body: string
@@ -24,6 +32,8 @@ export type ItemDetail = BoardItem & {
   epic: WorkItemRef | null
   /** Items this one is blocked by, from GitHub's native issue dependencies. Never null. */
   blockedBy: WorkItemRef[]
+  /** `Issue.updatedAt`. Required here, unlike on BoardItem: GitHub always reports it. */
+  version: string
 }
 
 export class NotOnBoardError extends Error {
@@ -125,7 +135,7 @@ export const ITEM_QUERY = `
 query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
     issue(number:$number){
-      id number title body state
+      id number title body state updatedAt
       parent{ number repository{ owner{ login } name } }
       blockedBy(first:50){ pageInfo{ hasNextPage } nodes{ number repository{ owner{ login } name } } }
       projectItems(first:100){
@@ -206,6 +216,7 @@ export async function getItem(
     // is not called here in v1.
     epic: epicFromLink,
     blockedBy,
+    version: issue.updatedAt,
   }
 }
 
@@ -394,6 +405,109 @@ export async function checkEntries(
           `Run item_get on ${formatRef(ref)} to see its checklist as it stands before retrying.`,
       )
     }
+  }
+  return after
+}
+
+// Exported for queries.integration.test.ts. Title and body are both optional so one document serves
+// every edit: updateItem sends only the variables the change carries, because an omitted variable
+// leaves that field alone while an explicit null might not.
+export const UPDATE_ISSUE = `
+mutation($issue:ID!,$title:String,$body:String){
+  updateIssue(input:{id:$issue,title:$title,body:$body}){ issue{ id } }
+}`
+
+export class ConcurrentEditError extends Error {
+  constructor(ref: WorkItemRef, expected: string, found: string | undefined) {
+    super(
+      `${formatRef(ref)} has changed since it was read: the edit expected version "${expected}" ` +
+        `but the item is at "${found ?? 'unknown'}". Armature made no change. Run item_get on ` +
+        `${formatRef(ref)} and re-apply the edit to the item as it stands, passing its new version.`,
+    )
+    this.name = 'ConcurrentEditError'
+  }
+}
+
+// The body's canonical Depends on lines and the native blockedBy links are two records of one fact,
+// and working-the-board's prerequisite check reads the prose. An edit that leaves them disagreeing
+// is refused rather than written, in either direction.
+export class DependsOnDriftError extends Error {
+  constructor(ref: WorkItemRef, unlinked: WorkItemRef[], unstated: WorkItemRef[]) {
+    const list = (refs: WorkItemRef[]) => refs.map(formatRef).join(', ')
+    const parts: string[] = []
+    if (unlinked.length) {
+      parts.push(`says it depends on ${list(unlinked)}, but ${formatRef(ref)} is not blocked by them`)
+    }
+    if (unstated.length) {
+      parts.push(`does not say it depends on ${list(unstated)}, which ${formatRef(ref)} is blocked by`)
+    }
+    super(
+      `The new body for ${formatRef(ref)} ${parts.join(', and ')}. Armature made no change. ` +
+        `Change blockers with item_link, which writes the link and the line together, or make ` +
+        `the body's \`Depends on \`owner/repo#N\`\` lines match the links.`,
+    )
+    this.name = 'DependsOnDriftError'
+  }
+}
+
+/**
+ * Edit an item's title and/or body, only if it is unchanged since `change.expectVersion`.
+ *
+ * Unlike checkEntries, the new body comes from the caller, so a read-modify-write cannot protect
+ * a person's concurrent edit — the version check is what does. The residual race between that
+ * check and the write is GitHub's to close (updateIssue takes no If-Match); the read-back catches
+ * it rather than preventing it.
+ *
+ * Every refusal runs before the dry-run branch, so a dry run refuses whatever the real path does.
+ */
+export async function updateItem(
+  client: GitHubClient,
+  board: BoardRef,
+  ref: WorkItemRef,
+  change: ItemChange,
+  options: { dryRun?: boolean; read?: ItemReader } = {},
+): Promise<ItemDetail> {
+  const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
+
+  const before = await read(ref)
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
+  if (before.version !== change.expectVersion) {
+    throw new ConcurrentEditError(ref, change.expectVersion, before.version)
+  }
+
+  // Checked against the links, not the old body: a body that repairs drift toward the links is
+  // accepted, and one that leaves pre-existing drift in place is refused.
+  if (change.body !== undefined) {
+    const stated = parseDependsOn(change.body)
+    if (!sameRefSet(stated, before.blockedBy)) {
+      throw new DependsOnDriftError(
+        ref,
+        stated.filter((s) => !before.blockedBy.some((b) => sameRef(b, s))),
+        before.blockedBy.filter((b) => !stated.some((s) => sameRef(s, b))),
+      )
+    }
+  }
+
+  const title = change.title ?? before.title
+  const body = change.body ?? before.body
+  if (options.dryRun) return { ...before, title, body, checklist: parseChecklist(body) }
+
+  const variables: { issue: string; title?: string; body?: string } = { issue: before.id }
+  if (change.title !== undefined) variables.title = change.title
+  if (change.body !== undefined) variables.body = change.body
+  const sent = title !== before.title || body !== before.body
+  if (sent) await client.graphql(UPDATE_ISSUE, variables)
+
+  const after = await read(ref)
+  const advice =
+    `The edit ${sent ? 'was sent, and may or may not have landed' : 'was not sent: nothing differed'}. ` +
+    `Run item_get on ${formatRef(ref)} to see it as it stands before retrying.`
+  if (change.title !== undefined && after.title !== change.title) {
+    throw new UnverifiedWriteError(ref, change.title, after.title, advice)
+  }
+  // Never the bodies themselves: an issue body is too long for a message and may not be ours.
+  if (change.body !== undefined && after.body !== change.body) {
+    throw new UnverifiedWriteError(ref, 'the requested body', 'a different body', advice)
   }
   return after
 }
@@ -668,7 +782,7 @@ export async function createItem(
       checklist: parseChecklist(input.body), state: 'OPEN',
       status, projectItemId: '(dry-run)',
       parent: input.parent ?? null, epic: input.parent ?? null,
-      blockedBy: blockers,
+      blockedBy: blockers, version: '(dry-run)',
     }
   }
 

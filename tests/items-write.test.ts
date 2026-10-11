@@ -31,7 +31,7 @@ const snapshot = {
 function detail(status: string) {
   return {
     ref, id: 'I_1', title: 't', body: '', state: 'OPEN' as const,
-    checklist: [], status, projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+    checklist: [], status, projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [], version: 'v1',
   }
 }
 
@@ -229,7 +229,7 @@ describe('checkEntries', () => {
     const read: ItemReader = async () => ({
       ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
       status: opts.offBoard ? null : 'Todo', projectItemId: opts.offBoard ? null : 'PVTI_1',
-      parent: null, epic: null, blockedBy: [],
+      parent: null, epic: null, blockedBy: [], version: 'v1',
       checklist: parseChecklist(body),
     })
     const client = {
@@ -286,7 +286,7 @@ describe('checkEntries', () => {
       const body = reads++ === 0 ? '- [x] first' : '- [ ] first'
       return {
         ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
-        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [], version: 'v1',
         checklist: parseChecklist(body),
       }
     }
@@ -335,7 +335,7 @@ describe('checkEntries', () => {
       const body = reads++ === 0 ? '- [ ] first' : '- [x] renamed'
       return {
         ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
-        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [], version: 'v1',
         checklist: parseChecklist(body),
       }
     }
@@ -357,7 +357,7 @@ describe('checkEntries', () => {
       const body = reads++ === 0 ? '- [ ] first' : '- [x] first\n- [ ] first'
       return {
         ref: REF, id: 'I_1', title: 't', body, state: 'OPEN' as const,
-        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [],
+        status: 'Todo', projectItemId: 'PVTI_1', parent: null, epic: null, blockedBy: [], version: 'v1',
         checklist: parseChecklist(body),
       }
     }

@@ -9,6 +9,7 @@ import {
   ADD_SUB_ISSUE,
   ITEM_QUERY,
   PARENT_ID,
+  UPDATE_ISSUE,
   UPDATE_ISSUE_BODY,
 } from '../../server/providers/github/items.js'
 
@@ -156,6 +157,19 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
 
     const error = await (await client())
       .graphql<any>(UPDATE_ISSUE_BODY, { issue: unresolvable, body: 'unused' })
+      .then(() => null)
+      .catch((e: Error) => e)
+
+    expect(error, 'a mutation on an unresolvable id must not succeed').not.toBeNull()
+    expect(error!.message).toMatch(/could not resolve to a node/i)
+    expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
+  })
+
+  it('accepts UPDATE_ISSUE against the live schema, without writing anything', async () => {
+    const unresolvable = 'I_kwDOAAAAAAAAAAAAAAAAAA'
+
+    const error = await (await client())
+      .graphql<any>(UPDATE_ISSUE, { issue: unresolvable, title: 'unused', body: 'unused' })
       .then(() => null)
       .catch((e: Error) => e)
 
