@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/ryanlindsey/armature/compare/armature-v0.8.0...armature-v0.9.0) (2026-10-11)
+
+
+### Features
+
+* **item_link:** expose blocker and parent changes as a tool ([#105](https://github.com/ryanlindsey/armature/issues/105)) ([6d28299](https://github.com/ryanlindsey/armature/commit/6d2829928c85776a95449c2bea2f270502f302d9))
+* **item_update:** expose title and body edits as a tool ([#103](https://github.com/ryanlindsey/armature/issues/103)) ([a9626f0](https://github.com/ryanlindsey/armature/commit/a9626f07f596b7992510d9c7ef20302eaa20dc46))
+* **items:** link and unlink blockers and parent on an existing item ([#104](https://github.com/ryanlindsey/armature/issues/104)) ([60c05b0](https://github.com/ryanlindsey/armature/commit/60c05b063c1298951e63d95ce54ad05a011b7f41))
+* **items:** report an item's version and edit its title and body, guarded ([#102](https://github.com/ryanlindsey/armature/issues/102)) ([eca5b1e](https://github.com/ryanlindsey/armature/commit/eca5b1eac6503a61b998a1614b14a0a5acbd6d3d))
+* **skill:** repair defects through item_update and item_link, and report them ([#106](https://github.com/ryanlindsey/armature/issues/106)) ([fd8671a](https://github.com/ryanlindsey/armature/commit/fd8671a6e9b27ab0c33c0534b69dca6e8a0fb937))
+
 ## [0.8.0](https://github.com/ryanlindsey/armature/compare/armature-v0.7.0...armature-v0.8.0) (2026-09-25)
 
 
