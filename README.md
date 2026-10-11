@@ -132,7 +132,8 @@ the board itself, not configured.
 Epic membership comes from GitHub's native sub-issue parent links. There is no separate
 in-body convention to declare it. `item_create` sets that link when you pass it a `parent`, and the blocking links when you pass
 `blockedBy`, so a fan-out of new issues lands under its epic, in sequence, rather than as a flat list
-somebody has to re-parent by hand afterwards.
+somebody has to re-parent by hand afterwards. `item_link` changes those links later, and keeps the
+item's `Depends on` lines in step with its blockers.
 
 ## Credential
 
@@ -154,7 +155,7 @@ it's about to do.
 
 ## Tools
 
-The MCP server exposes nine tools:
+The MCP server exposes ten tools:
 
 | tool | does |
 | --- | --- |
@@ -165,6 +166,7 @@ The MCP server exposes nine tools:
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
 | `item_check` | Set entries on an item's task-list checklist, each addressed by its exact text as `item_get` reports it. Every entry must match exactly once or nothing is written, and the result is read back and verified. |
 | `item_update` | Edit an item's title, body, or both. Pass the `version` from the `item_get` the edit was based on: if the item has changed since, the edit is refused and nothing is written. A body whose `Depends on` lines disagree with the item's blocker links is refused too — change blockers with `item_link`. The result is read back and verified. |
+| `item_link` | Change an existing item's blockers and parent: `addBlockedBy` and `removeBlockedBy` take lists of refs, `parent` sets or replaces the parent, and `clearParent: true` removes it. Then the item's `Depends on` lines are made to match all of its blockers, repairing drift the call did not name. Idempotent, so a repeat is safe. Every change is read back and verified, and a failure says which changes landed. |
 | `item_create` | Create an issue, add it to the board, and set its status — todo unless `status` names another — then optionally file it under a `parent` and mark it blocked by `blockedBy`, so `board_next` can return it, correctly ranked, without a second call. Each step is verified, and a failure says exactly which steps landed. |
 | `epic_survey` | An epic and its children in working order: each child's status, labels, blockers, and linked pull requests with their branches, plus which child is next and why — the same answer `board_next` gives. A sub-issue that is not on the board is reported separately, never dropped. |
 

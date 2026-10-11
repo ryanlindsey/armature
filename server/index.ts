@@ -13,7 +13,7 @@ import { GitHubBoardProvider } from './providers/github/provider.js'
 import { ALIAS_REF, buildAliasMap, readSiblingConfigFrom, resolveAlias } from './providers/github/aliases.js'
 import type { AliasMap, SiblingConfigReader } from './providers/github/aliases.js'
 import { selectNext } from './providers/github/next.js'
-import type { BoardItem, BoardProvider, ChecklistRequest } from './providers/types.js'
+import type { BoardItem, BoardProvider, ChecklistRequest, LinkChange } from './providers/types.js'
 import { VERSION } from './version.js'
 
 const DRY_RUN = process.env.ARMATURE_DRY_RUN === '1'
@@ -160,6 +160,39 @@ export const TOOLS = [
       required: ['ref', 'expectVersion'],
     },
   },
+  {
+    name: 'item_link',
+    description:
+      "Change an existing work item's blockers and parent. Adds or removes blockedBy links, sets " +
+      'or replaces the parent, or clears it with clearParent, then makes the item\'s Depends on ' +
+      'lines match all of its blocker links. Idempotent. Every change is verified by reading the ' +
+      'item back, and a failure says which changes landed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'owner/repo#number' },
+        addBlockedBy: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional items to mark this one blocked by, each as owner/repo#number.',
+        },
+        removeBlockedBy: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional items this one should no longer be blocked by, each as owner/repo#number.',
+        },
+        parent: {
+          type: 'string',
+          description: 'Optional parent to set, or to replace the current one with, as owner/repo#number.',
+        },
+        clearParent: {
+          type: 'boolean',
+          description: 'Optional. true removes the item from its parent; not allowed together with parent.',
+        },
+      },
+      required: ['ref'],
+    },
+  },
 ]
 
 function ok(value: unknown) {
@@ -241,6 +274,22 @@ export class ChecklistUnsupportedError extends Error {
   }
 }
 
+// `BoardProvider.link` is optional for the same reason again: keeping Depends on prose in step
+// with the links is a Markdown-body shape, and a tracker that cannot do that declines the method
+// rather than changing links and leaving the prose behind.
+export class LinkUnsupportedError extends Error {
+  constructor() {
+    super(
+      'This board provider does not support changing links. Changing a blocker or parent keeps ' +
+        "the item's Depends on lines in step with its links, which is a Markdown-body shape, and " +
+        'an adapter for a tracker without one declines to implement it rather than changing the ' +
+        'links and leaving the prose behind. Nothing was written. Change the links in the ' +
+        'tracker itself instead.',
+    )
+    this.name = 'LinkUnsupportedError'
+  }
+}
+
 function describeValue(value: unknown): string {
   if (value === undefined) return 'nothing'
   if (value === null) return 'null'
@@ -288,6 +337,38 @@ function optionalString(tool: string, field: string, value: unknown): string | u
   if (value === undefined || value === null) return undefined
   if (typeof value !== 'string') throw new InvalidArgumentError(tool, field, 'a string', value)
   return value
+}
+
+/**
+ * An optional list of references: item_create's `blockedBy`, item_link's `addBlockedBy` and
+ * `removeBlockedBy`. Absent or null means not asked, and returns undefined. Each element goes
+ * through refArgument, so `[60]` raises BareRefError exactly as `parent: 60` does — a bare number
+ * names a different item in every repository on the board.
+ */
+async function refList(
+  tool: string,
+  field: string,
+  value: unknown,
+  resolveRef: RefResolver,
+): Promise<WorkItemRef[] | undefined> {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) {
+    throw new InvalidArgumentError(tool, field, 'an array of references like acme/web#278', value)
+  }
+  const refs: WorkItemRef[] = []
+  for (const token of value) refs.push(await resolveRef(refArgument(tool, field, token)))
+  return refs
+}
+
+/** A comma-joined list for a log line, or null when there is nothing in it. */
+function refsForLog(refs: WorkItemRef[] | undefined): string | null {
+  return refs && refs.length ? refs.map(formatRef).join(', ') : null
+}
+
+/** Whether two ref lists name the same items, in any order and any case. */
+function sameRefs(a: WorkItemRef[], b: WorkItemRef[]): boolean {
+  const key = (refs: WorkItemRef[]) => [...new Set(refs.map((r) => formatRef(r).toLowerCase()))].sort().join(' ')
+  return key(a) === key(b)
 }
 
 /**
@@ -489,20 +570,7 @@ export async function dispatch(
           ? undefined
           : requiredString(name, 'status', args.status)
 
-      // Each element through refArgument, so `blockedBy: [60]` raises BareRefError exactly as
-      // `parent: 60` does — a bare number names a different blocker in every repository.
-      let blockedBy: WorkItemRef[] | undefined
-      if (args.blockedBy !== undefined && args.blockedBy !== null) {
-        if (!Array.isArray(args.blockedBy)) {
-          throw new InvalidArgumentError(
-            name, 'blockedBy', 'an array of references like acme/web#278', args.blockedBy,
-          )
-        }
-        blockedBy = []
-        for (const token of args.blockedBy) {
-          blockedBy.push(await resolveRef(refArgument(name, 'blockedBy', token)))
-        }
-      }
+      const blockedBy = await refList(name, 'blockedBy', args.blockedBy, resolveRef)
 
       const created = await provider.create({
         owner,
@@ -601,6 +669,60 @@ export async function dispatch(
           },
           options.logWrite,
         )
+      }
+      return ok(presentMutation(after, options.dryRun))
+    }
+
+    case 'item_link': {
+      // Every argument is checked before the capability, so a malformed call is reported as
+      // malformed rather than as unsupported — the order item_check follows.
+      const ref = await resolveRef(refArgument(name, 'ref', args.ref))
+      const addBlockedBy = await refList(name, 'addBlockedBy', args.addBlockedBy, resolveRef)
+      const removeBlockedBy = await refList(name, 'removeBlockedBy', args.removeBlockedBy, resolveRef)
+      const parent =
+        args.parent === undefined || args.parent === null
+          ? undefined
+          : await resolveRef(refArgument(name, 'parent', args.parent))
+      // An explicit boolean rather than `parent: null`, because null already means "not asked"
+      // for every other optional argument here, and a model sending one would clear a parent it
+      // meant to leave alone.
+      const clearParent = args.clearParent === undefined || args.clearParent === null ? false : args.clearParent
+      if (typeof clearParent !== 'boolean') {
+        throw new InvalidArgumentError(name, 'clearParent', 'true or false', args.clearParent)
+      }
+      if (clearParent && parent !== undefined) {
+        throw new InvalidArgumentError(name, 'parent', 'absent when clearParent is true', args.parent)
+      }
+      if (!addBlockedBy?.length && !removeBlockedBy?.length && parent === undefined && !clearParent) {
+        throw new InvalidArgumentError(
+          name, 'addBlockedBy, removeBlockedBy, parent or clearParent', 'at least one change', undefined,
+        )
+      }
+      if (!provider.link) throw new LinkUnsupportedError()
+
+      // Spread rather than `parent: undefined`: LinkChange reads an absent parent as "leave it",
+      // and a key present-but-undefined is one the provider would have to second-guess.
+      const change: LinkChange = {
+        ...(addBlockedBy?.length ? { addBlockedBy } : {}),
+        ...(removeBlockedBy?.length ? { removeBlockedBy } : {}),
+        ...(parent !== undefined ? { parent } : clearParent ? { parent: null } : {}),
+      }
+      const before = await provider.getItem(ref)
+      const after = await provider.link(ref, change)
+
+      const log = (field: string, was: string | null, now: string | null) =>
+        logMutation({ ref: formatRef(ref), field, before: was, after: now, dryRun: options.dryRun }, options.logWrite)
+      if (!sameRefs(before.blockedBy ?? [], after.blockedBy)) {
+        log('Blocked by', refsForLog(before.blockedBy), refsForLog(after.blockedBy))
+      }
+      if (!sameRefs(before.parent ? [before.parent] : [], after.parent ? [after.parent] : [])) {
+        log('Parent', before.parent ? formatRef(before.parent) : null, after.parent ? formatRef(after.parent) : null)
+      }
+      // The lines by ref, never the body: an issue body is too long for a log line and may not be ours.
+      // Unlike the two lines above, a diff rather than two states: `before` holds the lines the call
+      // removed and `after` the lines it added.
+      if (after.dependsOn.added.length || after.dependsOn.removed.length) {
+        log('Depends on', refsForLog(after.dependsOn.removed), refsForLog(after.dependsOn.added))
       }
       return ok(presentMutation(after, options.dryRun))
     }

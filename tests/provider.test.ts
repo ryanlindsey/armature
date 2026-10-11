@@ -19,6 +19,8 @@ function makeClient(initialBody = '') {
   let status = 'Todo'
   let body = initialBody
   let title = 'Item 5'
+  // acme/web#5's blockers, as GitHub's issue dependencies report them.
+  const blockers: { number: number; repository: { owner: { login: string }; name: string } }[] = []
   // Bumped by every issue edit, as GitHub's updatedAt is, so a version read before an edit is
   // stale after it.
   let edits = 0
@@ -47,6 +49,11 @@ function makeClient(initialBody = '') {
         edits++
         return { updateIssue: { issue: { id: 'I_1' } } }
       }
+      if (query.includes('addBlockedBy')) {
+        const number = Number(String(variables!.blocker).replace('I_', ''))
+        blockers.push({ number, repository: { owner: { login: 'acme' }, name: 'web' } })
+        return { addBlockedBy: { issue: { id: 'I_1' } } }
+      }
       if (query.includes('updateProjectV2ItemFieldValue')) {
         status = 'In progress'
         return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'PVTI_1' } } }
@@ -56,6 +63,16 @@ function makeClient(initialBody = '') {
         return {
           repository: {
             issue: { title: 'Epic', subIssues: { pageInfo: { hasNextPage: false }, nodes: [] } },
+          },
+        }
+      }
+      // ISSUE_IDENTITY, resolving a link target. Only acme/web#9 exists besides the item itself.
+      if (query.includes('issue(number:$number){ id number repository')) {
+        const number = variables!.number as number
+        if (variables!.name !== 'web' || (number !== 9 && number !== 5)) return { repository: { issue: null } }
+        return {
+          repository: {
+            issue: { id: `I_${number}`, number, repository: { owner: { login: 'acme' }, name: 'web' } },
           },
         }
       }
@@ -70,6 +87,7 @@ function makeClient(initialBody = '') {
               updatedAt: updatedAt(),
               state: 'OPEN',
               parent: null,
+              blockedBy: { pageInfo: { hasNextPage: false }, nodes: blockers },
               projectItems: {
                 nodes: [
                   { id: 'PVTI_1', project: { number: 1 }, fieldValueByName: { name: status } },
@@ -283,6 +301,52 @@ describe('GitHubBoardProvider.update', () => {
     expect(currentBody()).toBe('old')
     expect((after as { body?: string }).body).toBe('new')
     expect(after.version).toBe(version)
+  })
+})
+
+describe('GitHubBoardProvider.link', () => {
+  const blocker = { owner: 'acme', repo: 'web', number: 9 }
+
+  it('writes the link and its Depends on line, and re-reads the board afterwards', async () => {
+    const { client, surveys, currentBody } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.survey()
+    const surveysBefore = surveys.count
+    const after = await provider.link(ref, { addBlockedBy: [blocker] })
+    await provider.survey()
+
+    expect(after.blockedBy).toEqual([blocker])
+    expect(after.dependsOn).toEqual({ added: [blocker], removed: [] })
+    expect(currentBody()).toContain('Depends on `acme/web#9`')
+    expect(surveys.count).toBe(surveysBefore + 1)
+  })
+
+  it('re-reads the board even when the change is refused', async () => {
+    const { client, surveys, currentBody } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.survey()
+    const surveysBefore = surveys.count
+    await expect(
+      provider.link(ref, { addBlockedBy: [{ owner: 'acme', repo: 'web', number: 404 }] }),
+    ).rejects.toThrow(/does not exist/)
+    await provider.survey()
+
+    expect(currentBody()).toBe('')
+    expect(surveys.count).toBe(surveysBefore + 1)
+  })
+
+  it('sends nothing under dry run, and reports the predicted links', async () => {
+    const { client, currentBody } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo', dryRun: true })
+
+    const after = await provider.link(ref, { addBlockedBy: [blocker] })
+
+    expect(currentBody()).toBe('')
+    expect(after.blockedBy).toEqual([blocker])
+    expect(after.dependsOn.added).toEqual([blocker])
+    expect(client.graphql).not.toHaveBeenCalledWith(expect.stringContaining('addBlockedBy'), expect.anything())
   })
 })
 

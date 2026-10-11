@@ -1360,12 +1360,12 @@ var require_errors = __commonJS({
       }
       return [E.schemaPath, schPath];
     }
-    function extraErrorProps(cxt, { params, message }, keyValues) {
+    function extraErrorProps(cxt, { params, message: message2 }, keyValues) {
       const { keyword, data, schemaValue, it } = cxt;
       const { opts, propertyName, topSchemaRef, schemaPath } = it;
       keyValues.push([E.keyword, keyword], [E.params, typeof params == "function" ? params(cxt) : params || (0, codegen_1._)`{}`]);
       if (opts.messages) {
-        keyValues.push([E.message, typeof message == "function" ? message(cxt) : message]);
+        keyValues.push([E.message, typeof message2 == "function" ? message2(cxt) : message2]);
       }
       if (opts.verbose) {
         keyValues.push([E.schema, schemaValue], [E.parentSchema, (0, codegen_1._)`${topSchemaRef}${schemaPath}`], [names_1.default.data, data]);
@@ -4494,11 +4494,11 @@ var require_core = __commonJS({
         }
         const valid = this.validate($schema, schema);
         if (!valid && throwOrLogError) {
-          const message = "schema is invalid: " + this.errorsText();
+          const message2 = "schema is invalid: " + this.errorsText();
           if (this.opts.validateSchema === "log")
-            this.logger.error(message);
+            this.logger.error(message2);
           else
-            throw new Error(message);
+            throw new Error(message2);
         }
         return valid;
       }
@@ -7801,8 +7801,8 @@ function prefixIssues(path, issues) {
     return iss;
   });
 }
-function unwrapMessage(message) {
-  return typeof message === "string" ? message : message?.message;
+function unwrapMessage(message2) {
+  return typeof message2 === "string" ? message2 : message2?.message;
 }
 function attachSchema(issues, start, inst) {
   var _a3;
@@ -7820,10 +7820,10 @@ function finalizeIssue(iss, ctx, config2) {
       iss.schema = iss.inst;
   }
   const schemaError = iss.schema !== iss.inst ? iss.schema?._zod.def?.error : void 0;
-  const message = iss.message ? iss.message : unwrapMessage(iss.inst?._zod.def?.error?.(iss)) ?? unwrapMessage(schemaError?.(iss)) ?? unwrapMessage(ctx?.error?.(iss)) ?? unwrapMessage(config2.customError?.(iss)) ?? unwrapMessage(config2.localeError?.(iss)) ?? "Invalid input";
+  const message2 = iss.message ? iss.message : unwrapMessage(iss.inst?._zod.def?.error?.(iss)) ?? unwrapMessage(schemaError?.(iss)) ?? unwrapMessage(ctx?.error?.(iss)) ?? unwrapMessage(config2.customError?.(iss)) ?? unwrapMessage(config2.localeError?.(iss)) ?? "Invalid input";
   const { inst: _inst, schema: _schema, continue: _continue, input: _input, ...rest } = iss;
   rest.path ?? (rest.path = []);
-  rest.message = message;
+  rest.message = message2;
   if (ctx?.reportInput) {
     rest.input = _input;
   }
@@ -11435,12 +11435,12 @@ function initializeContext(params) {
     external: params?.external ?? void 0
   };
 }
-function handleUnrepresentable(schema, ctx, json, params, message) {
-  const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message }) : ctx.unrepresentable;
+function handleUnrepresentable(schema, ctx, json, params, message2) {
+  const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message: message2 }) : ctx.unrepresentable;
   if (result === "any")
     return false;
   if (result === void 0 || result === "throw")
-    throw new Error(message);
+    throw new Error(message2);
   Object.assign(json, result);
   return true;
 }
@@ -14930,8 +14930,8 @@ var ServerResultSchema = union([
   CreateTaskResultSchema
 ]);
 var McpError = class _McpError extends Error {
-  constructor(code, message, data) {
-    super(`MCP error ${code}: ${message}`);
+  constructor(code, message2, data) {
+    super(`MCP error ${code}: ${message2}`);
     this.code = code;
     this.data = data;
     this.name = "McpError";
@@ -14939,19 +14939,19 @@ var McpError = class _McpError extends Error {
   /**
    * Factory method to create the appropriate error type based on the error code and data
    */
-  static fromError(code, message, data) {
+  static fromError(code, message2, data) {
     if (code === ErrorCode.UrlElicitationRequired && data) {
       const errorData = data;
       if (errorData.elicitations) {
-        return new UrlElicitationRequiredError(errorData.elicitations, message);
+        return new UrlElicitationRequiredError(errorData.elicitations, message2);
       }
     }
-    return new _McpError(code, message, data);
+    return new _McpError(code, message2, data);
   }
 };
 var UrlElicitationRequiredError = class extends McpError {
-  constructor(elicitations, message = `URL elicitation${elicitations.length > 1 ? "s" : ""} required`) {
-    super(ErrorCode.UrlElicitationRequired, message, {
+  constructor(elicitations, message2 = `URL elicitation${elicitations.length > 1 ? "s" : ""} required`) {
+    super(ErrorCode.UrlElicitationRequired, message2, {
       elicitations
     });
   }
@@ -15037,15 +15037,15 @@ var Protocol = class {
             let queuedMessage;
             while (queuedMessage = await this._taskMessageQueue.dequeue(taskId, extra.sessionId)) {
               if (queuedMessage.type === "response" || queuedMessage.type === "error") {
-                const message = queuedMessage.message;
-                const requestId = message.id;
+                const message2 = queuedMessage.message;
+                const requestId = message2.id;
                 const resolver = this._requestResolvers.get(requestId);
                 if (resolver) {
                   this._requestResolvers.delete(requestId);
                   if (queuedMessage.type === "response") {
-                    resolver(message);
+                    resolver(message2);
                   } else {
-                    const errorMessage = message;
+                    const errorMessage = message2;
                     const error2 = new McpError(errorMessage.error.code, errorMessage.error.message, errorMessage.error.data);
                     resolver(error2);
                   }
@@ -15184,16 +15184,16 @@ var Protocol = class {
       this._onerror(error2);
     };
     const _onmessage = this._transport?.onmessage;
-    this._transport.onmessage = (message, extra) => {
-      _onmessage?.(message, extra);
-      if (isJSONRPCResultResponse(message) || isJSONRPCErrorResponse(message)) {
-        this._onresponse(message);
-      } else if (isJSONRPCRequest(message)) {
-        this._onrequest(message, extra);
-      } else if (isJSONRPCNotification(message)) {
-        this._onnotification(message);
+    this._transport.onmessage = (message2, extra) => {
+      _onmessage?.(message2, extra);
+      if (isJSONRPCResultResponse(message2) || isJSONRPCErrorResponse(message2)) {
+        this._onresponse(message2);
+      } else if (isJSONRPCRequest(message2)) {
+        this._onrequest(message2, extra);
+      } else if (isJSONRPCNotification(message2)) {
+        this._onnotification(message2);
       } else {
-        this._onerror(new Error(`Unknown message type: ${JSON.stringify(message)}`));
+        this._onerror(new Error(`Unknown message type: ${JSON.stringify(message2)}`));
       }
     };
     await this._transport.start();
@@ -15803,12 +15803,12 @@ var Protocol = class {
    * the error appropriately (e.g., by failing the task, logging, etc.). The Protocol layer
    * simply propagates the error.
    */
-  async _enqueueTaskMessage(taskId, message, sessionId) {
+  async _enqueueTaskMessage(taskId, message2, sessionId) {
     if (!this._taskStore || !this._taskMessageQueue) {
       throw new Error("Cannot enqueue task message: taskStore and taskMessageQueue are not configured");
     }
     const maxQueueSize = this._options?.maxTaskQueueSize;
-    await this._taskMessageQueue.enqueue(taskId, message, sessionId, maxQueueSize);
+    await this._taskMessageQueue.enqueue(taskId, message2, sessionId, maxQueueSize);
   }
   /**
    * Clears the message queue for a task and rejects any pending request resolvers.
@@ -15818,9 +15818,9 @@ var Protocol = class {
   async _clearTaskQueue(taskId, sessionId) {
     if (this._taskMessageQueue) {
       const messages = await this._taskMessageQueue.dequeueAll(taskId, sessionId);
-      for (const message of messages) {
-        if (message.type === "request" && isJSONRPCRequest(message.message)) {
-          const requestId = message.message.id;
+      for (const message2 of messages) {
+        if (message2.type === "request" && isJSONRPCRequest(message2.message)) {
+          const requestId = message2.message.id;
           const resolver = this._requestResolvers.get(requestId);
           if (resolver) {
             resolver(new McpError(ErrorCode.InternalError, "Task cancelled or completed"));
@@ -16669,8 +16669,8 @@ var ReadBuffer = class {
 function deserializeMessage(line) {
   return JSONRPCMessageSchema.parse(JSON.parse(line));
 }
-function serializeMessage(message) {
-  return JSON.stringify(message) + "\n";
+function serializeMessage(message2) {
+  return JSON.stringify(message2) + "\n";
 }
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
@@ -16708,11 +16708,11 @@ var StdioServerTransport = class {
   processReadBuffer() {
     while (true) {
       try {
-        const message = this._readBuffer.readMessage();
-        if (message === null) {
+        const message2 = this._readBuffer.readMessage();
+        if (message2 === null) {
           break;
         }
-        this.onmessage?.(message);
+        this.onmessage?.(message2);
       } catch (error2) {
         this.onerror?.(error2);
       }
@@ -16728,9 +16728,9 @@ var StdioServerTransport = class {
     this._readBuffer.clear();
     this.onclose?.();
   }
-  send(message) {
+  send(message2) {
     return new Promise((resolve) => {
-      const json = serializeMessage(message);
+      const json = serializeMessage(message2);
       if (this._stdout.write(json)) {
         resolve();
       } else {
@@ -16793,8 +16793,8 @@ function isGitHubHost(host) {
 
 // server/config.ts
 var ConfigError = class extends Error {
-  constructor(message) {
-    super(message);
+  constructor(message2) {
+    super(message2);
     this.name = "ConfigError";
   }
 };
@@ -17021,8 +17021,8 @@ var GraphQLError = class extends Error {
    * The `type` of each error GitHub reported, e.g. NOT_FOUND. Kept so a caller can turn a failure
    * it understands into an error that names the fix, rather than matching on message text.
    */
-  constructor(message, types = []) {
-    super(message);
+  constructor(message2, types = []) {
+    super(message2);
     this.types = types;
     this.name = "GraphQLError";
   }
@@ -17525,6 +17525,17 @@ function applyChecks(ref, body, requests) {
 
 // server/providers/github/depends.ts
 var CANONICAL = /^Depends on `([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#([1-9]\d*)`$/;
+var UnclosedFenceError = class extends Error {
+  constructor(refs) {
+    super(
+      `Cannot add ${refs.map((r) => `Depends on \`${formatRef(r)}\``).join(", ")} to this body: it ends inside a code fence that is never closed, so an appended line would be code, not prose. Nothing was changed. Close the fence (add a matching \`\`\` or ~~~ line) with item_update, then retry.`
+    );
+    this.name = "UnclosedFenceError";
+  }
+};
+function dependsOnLine(ref) {
+  return `Depends on \`${formatRef(ref)}\``;
+}
 function parseDependsOn(body) {
   const lines = splitLines(body);
   const mask = codeMask(body);
@@ -17538,6 +17549,67 @@ function parseDependsOn(body) {
   });
   return refs;
 }
+function syncDependsOn(body, blockers) {
+  const target = distinct(blockers);
+  const targetKeys = new Set(target.map(refKey));
+  const lines = splitLines(body);
+  const mask = codeMask(body);
+  const kept = [];
+  const seen = /* @__PURE__ */ new Set();
+  const removedKeys = /* @__PURE__ */ new Set();
+  const removed = [];
+  let dropped = false;
+  let anchor2 = -1;
+  lines.forEach((line, i) => {
+    const ref = canonicalRef(line.text, mask[i]);
+    if (!ref) {
+      kept.push({ ...line });
+      return;
+    }
+    const key2 = refKey(ref);
+    if (!targetKeys.has(key2) || seen.has(key2)) {
+      dropped = true;
+      if (!targetKeys.has(key2) && !removedKeys.has(key2)) {
+        removedKeys.add(key2);
+        removed.push(ref);
+      }
+      return;
+    }
+    seen.add(key2);
+    kept.push({ ...line });
+    anchor2 = kept.length - 1;
+  });
+  const added = target.filter((ref) => !seen.has(refKey(ref)));
+  if (!dropped && added.length === 0) return { body, added: [], removed: [] };
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const fresh = added.map(dependsOnLine);
+  if (added.length === 0) return { body: join2(kept), added, removed };
+  if (anchor2 >= 0) {
+    const at = kept[anchor2];
+    const endsBody = at.eol === "";
+    if (endsBody) at.eol = eol;
+    const inserted = fresh.map((text, i) => ({
+      text,
+      eol: endsBody && i === fresh.length - 1 ? "" : eol
+    }));
+    kept.splice(anchor2 + 1, 0, ...inserted);
+    return { body: join2(kept), added, removed };
+  }
+  while (kept.length > 0 && /^[ \t]*$/.test(kept[kept.length - 1].text)) kept.pop();
+  const finalNewline = /\n$/.test(body) ? eol : "";
+  let prefix = "";
+  if (kept.length > 0) {
+    kept[kept.length - 1].eol = "";
+    prefix = join2(kept) + eol + eol;
+  }
+  const result = prefix + fresh.join(eol) + finalNewline;
+  const resultMask = codeMask(result);
+  const firstNew = splitLines(prefix).length - 1;
+  if (resultMask.slice(firstNew, firstNew + fresh.length).some(Boolean)) {
+    throw new UnclosedFenceError(added);
+  }
+  return { body: result, added, removed };
+}
 function sameRefSet(a, b) {
   const left = new Set(a.map(refKey));
   const right = new Set(b.map(refKey));
@@ -17549,6 +17621,9 @@ function splitLines(body) {
   for (let i = 0; i < parts.length; i += 2) lines.push({ text: parts[i], eol: parts[i + 1] ?? "" });
   return lines;
 }
+function join2(lines) {
+  return lines.map((line) => line.text + line.eol).join("");
+}
 function canonicalRef(text, isCode) {
   if (isCode) return null;
   const match2 = CANONICAL.exec(text.trim());
@@ -17559,6 +17634,15 @@ function canonicalRef(text, isCode) {
 }
 function refKey(ref) {
   return `${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`;
+}
+function distinct(refs) {
+  const seen = /* @__PURE__ */ new Set();
+  return refs.filter((ref) => {
+    const key2 = refKey(ref);
+    if (seen.has(key2)) return false;
+    seen.add(key2);
+    return true;
+  });
 }
 
 // server/providers/github/items.ts
@@ -18025,6 +18109,230 @@ async function createItem(client, board, snapshot, input, options = {}) {
   ];
   throw new UnsequencedItemError(madeRef, link?.ref ?? null, missing, confirmed, `${reasons.join("; ")}.`);
 }
+var REMOVE_BLOCKED_BY = `
+mutation($blocked:ID!,$blocker:ID!){
+  removeBlockedBy(input:{issueId:$blocked,blockingIssueId:$blocker}){ issue{ id } }
+}`;
+var SET_PARENT = `
+mutation($parent:ID!,$child:ID!){
+  addSubIssue(input:{issueId:$parent,subIssueId:$child,replaceParent:true}){ subIssue{ id } }
+}`;
+var REMOVE_SUB_ISSUE = `
+mutation($parent:ID!,$child:ID!){
+  removeSubIssue(input:{issueId:$parent,subIssueId:$child}){ subIssue{ id } }
+}`;
+var ISSUE_IDENTITY = `
+query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){ issue(number:$number){ id number repository{ owner{ login } name } } }
+}`;
+async function issueIdentity(client, ref) {
+  try {
+    const found = await client.graphql(ISSUE_IDENTITY, {
+      owner: ref.owner,
+      name: ref.repo,
+      number: ref.number
+    });
+    const issue2 = found.repository?.issue;
+    if (!issue2?.id) return null;
+    return {
+      id: issue2.id,
+      ref: {
+        owner: issue2.repository.owner.login,
+        repo: issue2.repository.name,
+        number: issue2.number
+      }
+    };
+  } catch (error2) {
+    if (error2 instanceof GraphQLError && error2.types.includes("NOT_FOUND")) return null;
+    throw error2;
+  }
+}
+var ConflictingLinkError = class extends Error {
+  constructor(ref, reason) {
+    super(
+      `Cannot change the links on ${formatRef(ref)}: ${reason}. Nothing was changed. Name each ref once, and never the item itself.`
+    );
+    this.name = "ConflictingLinkError";
+  }
+};
+var MissingLinkTargetError = class extends Error {
+  constructor(ref, target, role) {
+    const what = role === "blocker" ? `change whether ${formatRef(ref)} is blocked by ${formatRef(target)}` : role === "parent" ? `make ${formatRef(target)} the parent of ${formatRef(ref)}` : `remove ${formatRef(ref)} from its parent ${formatRef(target)}`;
+    super(
+      `Cannot ${what}: that issue does not exist, or is not visible to this credential. Nothing was changed. Check the reference.`
+    );
+    this.name = "MissingLinkTargetError";
+  }
+};
+var PartialLinkError = class extends Error {
+  constructor(ref, landed, unconfirmed, cause) {
+    const list = (items) => items.length ? items.join(", ") : "none";
+    const opening = landed.length ? `Changed the links on ${formatRef(ref)} only in part:` : unconfirmed.length ? `No link change on ${formatRef(ref)} was confirmed:` : `The links on ${formatRef(ref)} changed while armature was working, and this call sent nothing:`;
+    super(
+      `${opening} ${cause} Confirmed: ${list(landed)}. Not confirmed: ${list(unconfirmed)}. Its Depends on lines were not touched. item_link is idempotent, so calling it again with the same arguments is safe; run item_get on ${formatRef(ref)} first to see the links as they stand.`
+    );
+    this.landed = landed;
+    this.unconfirmed = unconfirmed;
+    this.name = "PartialLinkError";
+  }
+};
+var ProseOutOfStepError = class extends Error {
+  constructor(ref, cause) {
+    super(
+      `Every link change on ${formatRef(ref)} is confirmed, but its Depends on lines could not be confirmed to match them: ${cause} Links and prose disagree until fixed: run item_get on ${formatRef(ref)}, then item_update with Depends on lines matching its blockedBy, which it accepts.`
+    );
+    this.name = "ProseOutOfStepError";
+  }
+};
+var message = (error2) => error2 instanceof Error ? error2.message : String(error2);
+async function linkItem(client, board, ref, change, options = {}) {
+  const read = options.read ?? ((r) => getItem(client, board, r));
+  const add = distinctRefs(change.addBlockedBy ?? []);
+  const remove = distinctRefs(change.removeBlockedBy ?? []);
+  const has = (refs, x) => refs.some((y) => sameRef(y, x));
+  const both = add.filter((a) => has(remove, a));
+  if (both.length) {
+    const verb = both.length === 1 ? "is" : "are";
+    throw new ConflictingLinkError(ref, `${both.map(formatRef).join(", ")} ${verb} named both to add and to remove`);
+  }
+  if (has([...add, ...remove], ref)) {
+    throw new ConflictingLinkError(ref, `an item cannot be its own blocker`);
+  }
+  if (change.parent && sameRef(change.parent, ref)) {
+    throw new ConflictingLinkError(ref, `an item cannot be its own parent`);
+  }
+  const before = await read(ref);
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board);
+  const resolve = async (target, role) => {
+    const found = await issueIdentity(client, target);
+    if (!found) throw new MissingLinkTargetError(ref, target, role);
+    return found;
+  };
+  const toAdd = [];
+  for (const a of add) if (!has(before.blockedBy, a)) toAdd.push(await resolve(a, "blocker"));
+  const toRemove = [];
+  for (const x of remove) if (has(before.blockedBy, x)) toRemove.push(await resolve(x, "blocker"));
+  let setParent = null;
+  let clearParent = null;
+  if (change.parent && !sameRef(before.parent, change.parent)) {
+    setParent = await resolve(change.parent, "parent");
+  } else if (change.parent === null && before.parent) {
+    clearParent = await resolve(before.parent, "current parent");
+  }
+  const desired = distinctRefs([
+    ...before.blockedBy.filter((b) => !has(remove, b)),
+    ...toAdd.map((t) => t.ref)
+  ]);
+  const targetParent = change.parent === void 0 ? before.parent : change.parent === null ? null : setParent?.ref ?? before.parent;
+  const parentMatches = (p) => targetParent === null ? p === null : sameRef(p, targetParent);
+  const planned = syncDependsOn(before.body, desired);
+  if (options.dryRun) {
+    return {
+      ...before,
+      blockedBy: desired,
+      parent: targetParent,
+      epic: targetParent,
+      body: planned.body,
+      checklist: parseChecklist(planned.body),
+      dependsOn: { added: planned.added, removed: planned.removed }
+    };
+  }
+  const writes = [
+    ...toAdd.map((t) => ({
+      label: `blocked by ${formatRef(t.ref)}`,
+      doc: ADD_BLOCKED_BY,
+      vars: { blocked: before.id, blocker: t.id },
+      landed: (m) => has(m.blockedBy, t.ref)
+    })),
+    ...toRemove.map((t) => ({
+      label: `no longer blocked by ${formatRef(t.ref)}`,
+      doc: REMOVE_BLOCKED_BY,
+      vars: { blocked: before.id, blocker: t.id },
+      landed: (m) => !has(m.blockedBy, t.ref)
+    })),
+    ...setParent ? [{
+      label: `parent ${formatRef(setParent.ref)}`,
+      doc: SET_PARENT,
+      vars: { parent: setParent.id, child: before.id },
+      landed: (m) => sameRef(m.parent, setParent.ref)
+    }] : [],
+    ...clearParent ? [{
+      label: `parent ${formatRef(clearParent.ref)} cleared`,
+      doc: REMOVE_SUB_ISSUE,
+      vars: { parent: clearParent.id, child: before.id },
+      landed: (m) => m.parent === null
+    }] : []
+  ];
+  const refused = /* @__PURE__ */ new Map();
+  for (const w of writes) {
+    try {
+      await client.graphql(w.doc, w.vars);
+    } catch (error2) {
+      refused.set(w, message(error2));
+    }
+  }
+  let mid;
+  try {
+    mid = await read(ref);
+  } catch (error2) {
+    throw new PartialLinkError(
+      ref,
+      [],
+      writes.map((w) => w.label),
+      `${[
+        ...[...refused].map(([w, why]) => `${w.label} was refused: ${why}`),
+        `reading it back failed: ${message(error2)}`
+      ].join("; ")}.`
+    );
+  }
+  const landed = writes.filter((w) => w.landed(mid));
+  const unconfirmed = writes.filter((w) => !w.landed(mid));
+  const setDiffers = !sameRefSet(mid.blockedBy, desired) || !parentMatches(mid.parent);
+  if (unconfirmed.length || setDiffers) {
+    const reasons = unconfirmed.filter((w) => refused.has(w)).map((w) => `${w.label} was refused: ${refused.get(w)}`);
+    const unshown = unconfirmed.filter((w) => !refused.has(w));
+    if (unshown.length) reasons.push(`reading it back does not show ${unshown.map((w) => w.label).join(", ")}`);
+    if (!unconfirmed.length) {
+      reasons.push(
+        `reading it back shows blockers ${mid.blockedBy.map(formatRef).join(", ") || "none"} and parent ${mid.parent ? formatRef(mid.parent) : "none"}, not the ones asked for`
+      );
+    }
+    throw new PartialLinkError(ref, landed.map((w) => w.label), unconfirmed.map((w) => w.label), `${reasons.join("; ")}.`);
+  }
+  let synced;
+  try {
+    synced = syncDependsOn(mid.body, desired);
+  } catch (error2) {
+    if (!(error2 instanceof UnclosedFenceError)) throw error2;
+    throw new ProseOutOfStepError(
+      ref,
+      `its body now ends inside a code fence that is never closed, so an appended Depends on line would be code; the body was not written. Close the fence as part of the item_update.`
+    );
+  }
+  if (synced.body !== mid.body) {
+    try {
+      await client.graphql(UPDATE_ISSUE_BODY, { issue: mid.id, body: synced.body });
+    } catch (error2) {
+      throw new ProseOutOfStepError(ref, `the body write was refused: ${message(error2)}.`);
+    }
+  }
+  let after;
+  try {
+    after = await read(ref);
+  } catch (error2) {
+    throw new ProseOutOfStepError(ref, `reading it back failed: ${message(error2)}.`);
+  }
+  if (!sameRefSet(after.blockedBy, desired) || !parentMatches(after.parent)) {
+    throw new ProseOutOfStepError(ref, `its links changed again after they were confirmed.`);
+  }
+  if (!sameRefSet(parseDependsOn(after.body), after.blockedBy)) {
+    throw new ProseOutOfStepError(
+      ref,
+      `reading it back shows Depends on lines for ${parseDependsOn(after.body).map(formatRef).join(", ") || "none"} against blockers ${after.blockedBy.map(formatRef).join(", ") || "none"}.`
+    );
+  }
+  return { ...after, dependsOn: { added: synced.added, removed: synced.removed } };
+}
 
 // server/providers/github/provider.ts
 var GitHubBoardProvider = class {
@@ -18094,6 +18402,16 @@ var GitHubBoardProvider = class {
   async update(ref, change) {
     try {
       return await updateItem(this.client, this.board, ref, change, { dryRun: this.dryRun });
+    } finally {
+      this.invalidate();
+    }
+  }
+  // A parent is part of BoardSnapshot, so this write stales the cache as `update` does. Invalidated
+  // in a `finally` above all for PartialLinkError and ProseOutOfStepError: a call that landed in
+  // part is exactly the one whose board state is in doubt.
+  async link(ref, change) {
+    try {
+      return await linkItem(this.client, this.board, ref, change, { dryRun: this.dryRun });
     } finally {
       this.invalidate();
     }
@@ -18289,6 +18607,35 @@ var TOOLS = [
       },
       required: ["ref", "expectVersion"]
     }
+  },
+  {
+    name: "item_link",
+    description: "Change an existing work item's blockers and parent. Adds or removes blockedBy links, sets or replaces the parent, or clears it with clearParent, then makes the item's Depends on lines match all of its blocker links. Idempotent. Every change is verified by reading the item back, and a failure says which changes landed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "owner/repo#number" },
+        addBlockedBy: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional items to mark this one blocked by, each as owner/repo#number."
+        },
+        removeBlockedBy: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional items this one should no longer be blocked by, each as owner/repo#number."
+        },
+        parent: {
+          type: "string",
+          description: "Optional parent to set, or to replace the current one with, as owner/repo#number."
+        },
+        clearParent: {
+          type: "boolean",
+          description: "Optional. true removes the item from its parent; not allowed together with parent."
+        }
+      },
+      required: ["ref"]
+    }
   }
 ];
 function ok(value) {
@@ -18326,6 +18673,14 @@ var ChecklistUnsupportedError = class extends Error {
     this.name = "ChecklistUnsupportedError";
   }
 };
+var LinkUnsupportedError = class extends Error {
+  constructor() {
+    super(
+      "This board provider does not support changing links. Changing a blocker or parent keeps the item's Depends on lines in step with its links, which is a Markdown-body shape, and an adapter for a tracker without one declines to implement it rather than changing the links and leaving the prose behind. Nothing was written. Change the links in the tracker itself instead."
+    );
+    this.name = "LinkUnsupportedError";
+  }
+};
 function describeValue(value) {
   if (value === void 0) return "nothing";
   if (value === null) return "null";
@@ -18356,6 +18711,22 @@ function optionalString(tool, field, value) {
   if (value === void 0 || value === null) return void 0;
   if (typeof value !== "string") throw new InvalidArgumentError(tool, field, "a string", value);
   return value;
+}
+async function refList(tool, field, value, resolveRef) {
+  if (value === void 0 || value === null) return void 0;
+  if (!Array.isArray(value)) {
+    throw new InvalidArgumentError(tool, field, "an array of references like acme/web#278", value);
+  }
+  const refs = [];
+  for (const token of value) refs.push(await resolveRef(refArgument(tool, field, token)));
+  return refs;
+}
+function refsForLog(refs) {
+  return refs && refs.length ? refs.map(formatRef).join(", ") : null;
+}
+function sameRefs(a, b) {
+  const key2 = (refs) => [...new Set(refs.map((r) => formatRef(r).toLowerCase()))].sort().join(" ");
+  return key2(a) === key2(b);
 }
 function checklistEntries(tool, value) {
   if (!Array.isArray(value) || value.length === 0) {
@@ -18460,21 +18831,7 @@ async function dispatch(provider, name, args, options) {
       }
       const parent = args.parent === void 0 || args.parent === null ? void 0 : await resolveRef(refArgument(name, "parent", args.parent));
       const status = args.status === void 0 || args.status === null ? void 0 : requiredString(name, "status", args.status);
-      let blockedBy;
-      if (args.blockedBy !== void 0 && args.blockedBy !== null) {
-        if (!Array.isArray(args.blockedBy)) {
-          throw new InvalidArgumentError(
-            name,
-            "blockedBy",
-            "an array of references like acme/web#278",
-            args.blockedBy
-          );
-        }
-        blockedBy = [];
-        for (const token of args.blockedBy) {
-          blockedBy.push(await resolveRef(refArgument(name, "blockedBy", token)));
-        }
-      }
+      const blockedBy = await refList(name, "blockedBy", args.blockedBy, resolveRef);
       const created = await provider.create({
         owner,
         repo: repoName,
@@ -18558,6 +18915,46 @@ async function dispatch(provider, name, args, options) {
       }
       return ok(presentMutation(after, options.dryRun));
     }
+    case "item_link": {
+      const ref = await resolveRef(refArgument(name, "ref", args.ref));
+      const addBlockedBy = await refList(name, "addBlockedBy", args.addBlockedBy, resolveRef);
+      const removeBlockedBy = await refList(name, "removeBlockedBy", args.removeBlockedBy, resolveRef);
+      const parent = args.parent === void 0 || args.parent === null ? void 0 : await resolveRef(refArgument(name, "parent", args.parent));
+      const clearParent = args.clearParent === void 0 || args.clearParent === null ? false : args.clearParent;
+      if (typeof clearParent !== "boolean") {
+        throw new InvalidArgumentError(name, "clearParent", "true or false", args.clearParent);
+      }
+      if (clearParent && parent !== void 0) {
+        throw new InvalidArgumentError(name, "parent", "absent when clearParent is true", args.parent);
+      }
+      if (!addBlockedBy?.length && !removeBlockedBy?.length && parent === void 0 && !clearParent) {
+        throw new InvalidArgumentError(
+          name,
+          "addBlockedBy, removeBlockedBy, parent or clearParent",
+          "at least one change",
+          void 0
+        );
+      }
+      if (!provider.link) throw new LinkUnsupportedError();
+      const change = {
+        ...addBlockedBy?.length ? { addBlockedBy } : {},
+        ...removeBlockedBy?.length ? { removeBlockedBy } : {},
+        ...parent !== void 0 ? { parent } : clearParent ? { parent: null } : {}
+      };
+      const before = await provider.getItem(ref);
+      const after = await provider.link(ref, change);
+      const log = (field, was, now) => logMutation({ ref: formatRef(ref), field, before: was, after: now, dryRun: options.dryRun }, options.logWrite);
+      if (!sameRefs(before.blockedBy ?? [], after.blockedBy)) {
+        log("Blocked by", refsForLog(before.blockedBy), refsForLog(after.blockedBy));
+      }
+      if (!sameRefs(before.parent ? [before.parent] : [], after.parent ? [after.parent] : [])) {
+        log("Parent", before.parent ? formatRef(before.parent) : null, after.parent ? formatRef(after.parent) : null);
+      }
+      if (after.dependsOn.added.length || after.dependsOn.removed.length) {
+        log("Depends on", refsForLog(after.dependsOn.removed), refsForLog(after.dependsOn.added));
+      }
+      return ok(presentMutation(after, options.dryRun));
+    }
     default:
       throw new Error(`Unknown tool "${name}".`);
   }
@@ -18612,6 +19009,7 @@ export {
   ChecklistUnsupportedError,
   EpicUnsupportedError,
   InvalidArgumentError,
+  LinkUnsupportedError,
   TOOLS,
   dispatch,
   isEntryPoint,
