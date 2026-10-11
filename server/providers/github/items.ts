@@ -446,6 +446,13 @@ export class ConcurrentEditError extends Error {
 // The body's canonical Depends on lines and the native blockedBy links are two records of one fact,
 // and working-the-board's prerequisite check reads the prose. An edit that leaves them disagreeing
 // is refused rather than written, in either direction.
+export class EmptyChangeError extends Error {
+  constructor(ref: WorkItemRef) {
+    super(`An edit to ${formatRef(ref)} must carry a title, a body, or both. Nothing was changed.`)
+    this.name = 'EmptyChangeError'
+  }
+}
+
 export class DependsOnDriftError extends Error {
   constructor(ref: WorkItemRef, unlinked: WorkItemRef[], unstated: WorkItemRef[]) {
     const list = (refs: WorkItemRef[]) => refs.map(formatRef).join(', ')
@@ -485,11 +492,7 @@ export async function updateItem(
 ): Promise<ItemDetail> {
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
 
-  if (change.title === undefined && change.body === undefined) {
-    throw new Error(
-      `An edit to ${formatRef(ref)} must carry a title, a body, or both. Nothing was changed.`,
-    )
-  }
+  if (change.title === undefined && change.body === undefined) throw new EmptyChangeError(ref)
 
   const before = await read(ref)
   if (before.projectItemId === null) throw new NotOnBoardError(ref, board)

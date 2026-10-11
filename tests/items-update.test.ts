@@ -3,6 +3,7 @@ import { parseChecklist } from '../server/providers/github/checklist.js'
 import {
   ConcurrentEditError,
   DependsOnDriftError,
+  EmptyChangeError,
   getItem,
   type ItemDetail,
   NotOnBoardError,
@@ -170,9 +171,7 @@ describe('updateItem refusals', () => {
     const client = { graphql: vi.fn() } as any
     const read = reader(detail())
 
-    await expect(updateItem(client, board, ref, { expectVersion: V1 }, { read })).rejects.toThrow(
-      /title, a body, or both/,
-    )
+    await expect(updateItem(client, board, ref, { expectVersion: V1 }, { read })).rejects.toThrow(EmptyChangeError)
     expect(read).not.toHaveBeenCalled()
     expect(client.graphql).not.toHaveBeenCalled()
   })
