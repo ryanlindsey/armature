@@ -201,14 +201,13 @@ implementing anything itself.
 
 `filing-a-plan` is where a plan starts: it files a design spec as a `Spec:` issue in the board's
 claimed status, then its plan as an `Epic:` with one child per task — or as a single issue — each
-linked to its parent and to what it waits on, through `item_create` alone.
+linked to its parent and to what it waits on, through `item_create`.
 
-`filing-a-plan` and `working-the-board` — and so every child of an epic run — repair a defect
-they find in an open item — a wrong step, broken text, a missing or
-wrong blocker or parent — through `item_update` and `item_link` rather than `gh`, without asking
-first, and report every change in a **Board repairs** section, which `working-an-epic` collects
-from each child into its final report.
-They never edit a `Spec:` body, and a closed or done item is reported, not edited.
+When `filing-a-plan` or `working-the-board` (and so each child of an epic run) finds a defect in
+an open item — a wrong step, broken text, a missing or wrong blocker or parent — it repairs it
+through `item_update` or `item_link`, never `gh`, without asking first. It lists every change in a
+**Board repairs** section, which `working-an-epic` collects into its final report. A `Spec:` body
+is never edited, and a closed or done item is reported rather than changed.
 
 ## License
 

@@ -894,9 +894,11 @@ describe('the filing skill repairs through armature, and reports it', () => {
   const rules = section(skill, 'Rules')
 
   it('repairs with item_update and item_link, never gh', () => {
-    expect(rules).toMatch(/item_update/)
-    expect(rules).toMatch(/item_link/)
-    expect(rules).toMatch(/never[^.]*`gh`/i)
+    const repair = /\*\*Repair every other defect[\s\S]*?(?=\n- \*\*)/.exec(rules)
+    expect(repair, 'expected a "Repair every other defect" rule').not.toBeNull()
+    expect(repair![0]).toMatch(/item_update/)
+    expect(repair![0]).toMatch(/item_link/)
+    expect(repair![0]).toMatch(/never reach for `gh`/)
   })
 
   // The item's state is in doubt after a partial create; a repair on top of a guess compounds it.
@@ -978,7 +980,7 @@ describe('working-an-epic carries repairs through the child report', () => {
   it('treats a dependency found mid-child as a ruling, not a red flag', () => {
     const rules = section(skill, 'Rules')
     expect(rules).toMatch(/mid-child[\s\S]*a ruling, not a red flag/i)
-    expect(rules).toMatch(/its own branch[\s\S]*rebas/i)
+    expect(rules).toMatch(/its own\s+branch[\s\S]*rebas/i)
   })
 })
 
@@ -1000,7 +1002,37 @@ describe('the README and AGENTS.md describe repairs', () => {
   it('AGENTS.md says item_link owns the canonical line and item_update refuses drift', () => {
     const agents = readText('AGENTS.md')
     expect(agents).toMatch(/depends\.ts/)
-    expect(agents).toMatch(/`item_link`[^\n]*canonical[^\n]*`Depends on`|canonical `Depends on`[^\n]*`item_link`/)
+    expect(agents).toMatch(/`item_link` owns the canonical\s+`Depends on` line/)
     expect(agents).toMatch(/`item_update`[^.]*refuses/)
+  })
+})
+
+// The skills name tools' arguments and error classes the server defines; a rename in the server
+// would otherwise leave the skills telling a model to handle an error that can no longer arrive.
+describe('the repair rules name only what the server defines', () => {
+  const server = ['server/index.ts', 'server/providers/github/items.ts', 'server/providers/github/depends.ts']
+    .map(readText)
+    .join('\n')
+  const skills = ['filing-a-plan', 'working-the-board', 'working-an-epic']
+    .map((name) => readText(`skills/${name}/SKILL.md`))
+    .join('\n')
+
+  it('every *Error a skill names is a class the server or its errors define', () => {
+    const named = new Set(skills.match(/\b[A-Z][A-Za-z]+Error\b/g) ?? [])
+    expect(named.size).toBeGreaterThan(0)
+    const defined = readdirSync(new URL('../server/', import.meta.url), { recursive: true })
+      .filter((f) => String(f).endsWith('.ts'))
+      .map((f) => readText(`server/${String(f)}`))
+      .join('\n')
+    for (const name of named) {
+      expect(defined, `${name} is named in a skill`).toMatch(new RegExp(`class ${name}\\b`))
+    }
+  })
+
+  it('every item_update and item_link argument a skill names is in the tool schema', () => {
+    for (const arg of ['expectVersion', 'addBlockedBy', 'removeBlockedBy', 'clearParent']) {
+      expect(skills).toContain(`\`${arg}`)
+      expect(server).toContain(`${arg}: {`)
+    }
   })
 })

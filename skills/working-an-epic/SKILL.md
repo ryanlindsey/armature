@@ -50,6 +50,10 @@ this run, and nothing else, of what only you know:
   waiting on a blocker inside this epic is **not** recorded, because that answer changes as the run
   goes — re-derive it from `blockedBy` every iteration, or a blocker listed after its dependant
   leaves the dependant skipped for good.
+- **Children released to todo with a work-in-progress branch**, and that branch, as the child
+  reported it. This is not a ruling — the child is still re-derived from `blockedBy` and
+  dispatched when its turn comes — but it is how you know to brief it as a pick-up rather than a
+  fresh start. If the record is lost, the child looks for its own branch anyway.
 - **Each child's PR url and head branch**, as the child reported them. A PR that targets another
   child's branch rather than the default branch may not appear in that child's `pullRequests` at
   all — GitHub links a closing keyword only on the default branch — so this is how you find a base
@@ -121,15 +125,19 @@ record's rulings. For that child:
      without claiming and why, and **repairs** — its Board repairs lines, every item it changed
      through `item_update` or `item_link` and every defect it reported instead, or "none";
    - that a dependency it discovers mid-work is judged by the prerequisite ruling above, not by
-     board status, and that if the ruling stops it, it reports the blocker it added, the branch
-     holding its work in progress, and that it released the child to todo.
+     board status — and that a discovered blocker whose head branch the brief does not name cannot
+     be shown reachable, so it is treated as unworked — and that if the ruling stops it, it reports
+     the blocker it added, the branch holding its work in progress, and that it released the child
+     to todo.
 3. **Adjudicate.** Record the report in the run record. If it carries a red flag, stop and ask.
    Otherwise continue.
 4. **Loop**, starting again from `epic_survey`.
 
 When no child is left actionable, stop and report the whole stack with its merge order. The final
 report ends with a **Board repairs** section collecting every child's repairs, as each reported
-them, worked items apart from other items — or "none". `item_get`
+them, worked items apart from other items — or "none".
+
+`item_get`
 the epic; if it has a `parent`, `item_get` that too, and if its title starts `Spec:`, end the report
 with:
 "after the stack merges, close the epic, then the spec" — naming both refs. Armature closes neither.
@@ -173,9 +181,12 @@ merge order, and what needs a person.
   the prerequisite rule above, unchanged: an in-epic blocker whose work is reachable from the base
   lets the child continue; an unworked in-epic blocker defers the child, unrecorded — it commits
   its work in progress, releases itself to todo and stops without a PR — and you come back once the
-  blocker has a PR; an out-of-epic blocker stops the child, recorded and skipped. A child released
-  to todo with a work-in-progress branch is picked up later by finding its own branch and rebasing
-  it onto the base you name, and stacking means its base may now be the blocker's head branch.
+  blocker has a PR; an out-of-epic blocker stops the child, recorded and skipped. A blocker the
+  brief named no head branch for cannot be shown reachable, so the child treats it as unworked. A
+  child released to todo with a work-in-progress branch is picked up later by finding its own
+  branch and rebasing it onto the base you name, and stacking means its base may now be the
+  blocker's head branch; if it now has more than one open blocker, it needs a person to sequence,
+  and keeps its branch. Its own earlier dispatch's files are not a cross-child collision.
 - **Never claim a child that needs a person.** Claiming asserts armature is working it, which is
   false. Leave it in the board's todo status, record it, skip it, and carry on to the next
   actionable child. When skipping leaves nothing actionable — the rest need a person, or are

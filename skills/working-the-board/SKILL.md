@@ -21,9 +21,11 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
    not this one.
 3. **Check its prerequisites.** See the prerequisite rule below. Do this before claiming, not after.
 4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
-5. **Isolate.** Use `superpowers:using-git-worktrees`, and create the worktree without asking —
-   invoking armature is the consent. If the human said not to use a worktree, work in place
-   instead; see the rule below.
+5. **Isolate.** First look for an existing `issue-<number>-*` branch or worktree for this item:
+   if there is one, it holds this item's own work in progress — reuse it and rebase it onto the
+   base, as the mid-work rule below says. Otherwise use `superpowers:using-git-worktrees`, and
+   create the worktree without asking — invoking armature is the consent. If the human said not to
+   use a worktree, work in place instead; see the rule below.
 6. **Implement.** Use `superpowers:test-driven-development` — the failing test first, watched
    failing, then the implementation.
 7. **Review.** Use `superpowers:requesting-code-review`. Fix Critical and Important findings before
@@ -52,7 +54,7 @@ Most installs will not have it. Every step above still happens; only what carrie
 
 | Step | Instead |
 | --- | --- |
-| 5. Isolate | If `git status --porcelain` shows anything — uncommitted or untracked changes — say so and STOP rather than branching over them. Otherwise `git fetch`, then branch as `issue-<number>-<slug>` from `origin/<default-branch>`. |
+| 5. Isolate | If `git status --porcelain` shows anything — uncommitted or untracked changes — say so and STOP rather than branching over them. Otherwise `git fetch`, then check out this item's existing `issue-<number>-*` branch and rebase it, or, if there is none, branch as `issue-<number>-<slug>` from `origin/<default-branch>`. |
 | 6. Implement | Write the failing test first, watch it fail, then write the implementation. |
 | 7. Review | Re-read the whole diff before opening the PR. |
 | 9. Open a PR | `git push -u origin <branch>`, then `gh pr create`. |
@@ -77,7 +79,8 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   is a judgment — so this rule is the only place that check exists.
 - **A dependency found mid-work stops the work.** If work on `A` reveals that it depends on `B`,
   add the blocker with `item_link` (`addBlockedBy: ["B"]`), which writes the `Depends on` line too.
-  Then apply the prerequisite test above: if `B` is in the board's done status, carry on. If it is
+  Then apply the prerequisite test above — or the ruling your brief gives you, inside an epic run:
+  if `B` is in the board's done status, carry on. If it is
   not, commit the work in progress on `A`'s branch without pushing, set `A` back to the board's
   `semantics.todo` status with `item_status`, report "`A` is waiting on `B`" with the branch name
   and the Board repairs section, and STOP — no PR is opened. When `A` is picked up again, it finds
@@ -86,9 +89,10 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
 - **Repair any open item you find a defect in, then report it.** The item being worked, a sibling,
   the epic, a blocker — a wrong step, broken text, a missing or wrong blocker or parent. No
   per-edit approval, and never `gh`:
-  - title or body: `item_update`, with the `version` from a fresh `item_get`. On
+  - title or body: `item_update`, passing the `version` from a fresh `item_get` as
+    `expectVersion`. On
     `ConcurrentEditError` someone changed the item since you read it: `item_get` it again and
-    re-apply the edit to what is there now. `EmptyChangeError` means the edit changed nothing.
+    re-apply the edit to what is there now. An `item_update` must carry `title`, `body`, or both.
   - blockers or parent: `item_link` (`addBlockedBy`, `removeBlockedBy`, `parent`, or
     `clearParent: true` — `parent: null` means "not asked"), never by editing `Depends on` lines
     through `item_update`. `item_link` keeps the canonical lines — ``Depends on `owner/repo#N` ``,
@@ -109,18 +113,22 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
     history.
   - **never edit a `Spec:` item's body or give a spec a blocker**, which would write prose into it;
     report the defect instead. Setting or clearing a spec's parent is fine.
+  - any other `item_update` or `item_link` error, such as `UnverifiedWriteError`, leaves the outcome
+    unknown: do not call again; report it and let the human check.
 
   Every repair, and every defect reported instead of repaired, goes in a **Board repairs**
   section: in the session report always, and in the PR body next to the acceptance receipt when
   there is a PR. It separates the worked item from other items, one line per item — the ref, then
   what changed: `title`, `body: <one-line description>`, `+blocker owner/repo#N`,
-  `-blocker owner/repo#N`, `parent → owner/repo#N` or `parent cleared`, and `drift repaired` where
-  `item_link` reconciled the prose.
+  `-blocker owner/repo#N`, `parent → owner/repo#N` or `parent cleared`, `drift repaired` where
+  `item_link` reconciled the prose, and `reported, not fixed: <one-line description>` for a defect
+  left in a closed, done or `Spec:` item.
 - **`using-git-worktrees` does not get to ask for consent.** It asks before creating a worktree
   unless a preference is on record, and a missed prompt stalls the whole run. Invoking armature is
   that preference: treat consent as given and do not ask. Name the worktree `issue-<number>-<slug>`.
   If it reports you are already in a linked worktree, reuse it only when its branch has no commits
-  of its own beyond the default branch; otherwise it holds another item's work — say which, and
+  of its own beyond the default branch, or when it is named for this item's own number; otherwise
+  it holds another item's work — say which, and
   STOP, or leave it with `ExitWorktree` (keeping it) before creating this item's worktree. The
   exception is the human saying otherwise, for this run or in their standing instructions — "no
   worktree", "don't use a worktree", "work in place", in any wording. Then answer *no* and branch
