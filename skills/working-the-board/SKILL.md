@@ -23,7 +23,8 @@ when it is installed — see [Without Superpowers](#without-superpowers) when it
 4. **Claim.** Run `item_claim`. It refuses if someone else moved the item first.
 5. **Isolate.** First look for an existing `issue-<number>-*` branch or worktree for this item:
    if there is one, it holds this item's own work in progress — reuse it and rebase it onto the
-   base, as the mid-work rule below says. Otherwise use `superpowers:using-git-worktrees`, and
+   blocker's head branch, or the default branch once the blocker has merged (inside an epic run,
+   the base the brief names), as the mid-work rule below says. Otherwise use `superpowers:using-git-worktrees`, and
    create the worktree without asking — invoking armature is the consent. If the human said not to
    use a worktree, work in place instead; see the rule below.
 6. **Implement.** Use `superpowers:test-driven-development` — the failing test first, watched
@@ -79,9 +80,8 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   is a judgment — so this rule is the only place that check exists.
 - **A dependency found mid-work stops the work.** If work on `A` reveals that it depends on `B`,
   add the blocker with `item_link` (`addBlockedBy: ["B"]`), which writes the `Depends on` line too.
-  Then apply the prerequisite test above — or the ruling your brief gives you, inside an epic run:
-  if `B` is in the board's done status, carry on. If it is
-  not, commit the work in progress on `A`'s branch without pushing, set `A` back to the board's
+  Then apply the prerequisite test above (inside an epic run, the ruling your brief gives you
+  instead). If `B` passes it, carry on. If not, commit the work in progress on `A`'s branch without pushing, set `A` back to the board's
   `semantics.todo` status with `item_status`, report "`A` is waiting on `B`" with the branch name
   and the Board repairs section, and STOP — no PR is opened. When `A` is picked up again, it finds
   its own `issue-<number>-*` branch and rebases that work onto the blocker's head branch, or onto
@@ -90,9 +90,8 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   the epic, a blocker — a wrong step, broken text, a missing or wrong blocker or parent. No
   per-edit approval, and never `gh`:
   - title or body: `item_update`, passing the `version` from a fresh `item_get` as
-    `expectVersion`. On
-    `ConcurrentEditError` someone changed the item since you read it: `item_get` it again and
-    re-apply the edit to what is there now. An `item_update` must carry `title`, `body`, or both.
+    `expectVersion`. On `ConcurrentEditError` someone changed the item since you read it:
+    `item_get` it again and re-apply the edit to what is there now. An `item_update` must carry `title`, `body`, or both.
   - blockers or parent: `item_link` (`addBlockedBy`, `removeBlockedBy`, `parent`, or
     `clearParent: true` — `parent: null` means "not asked"), never by editing `Depends on` lines
     through `item_update`. `item_link` keeps the canonical lines — ``Depends on `owner/repo#N` ``,
@@ -103,7 +102,8 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
     Rewriting a non-canonical prerequisite ("blocked by …", several refs on a line) into canonical
     lines is an `item_update`, with lines matching `blockedBy`.
   - when `item_link` raises, its message says what landed. `MissingLinkTargetError` or
-    `ConflictingLinkError`: nothing changed — fix the ref or the request and call again.
+    `ConflictingLinkError`, or an argument refusal such as `BareRefError` or
+    `InvalidArgumentError`: nothing changed — fix the ref or the request and call again.
     `UnclosedFenceError`: nothing was written — close the code fence with `item_update` first.
     `PartialLinkError`: run `item_get`, then repeat the same `item_link` call; the prose was not
     touched. `ProseOutOfStepError`: the links are right and the prose is not — `item_get`, then
@@ -128,8 +128,7 @@ Armature's own steps — 1 to 4, 8 and 10 — do not change, and neither does th
   that preference: treat consent as given and do not ask. Name the worktree `issue-<number>-<slug>`.
   If it reports you are already in a linked worktree, reuse it only when its branch has no commits
   of its own beyond the default branch, or when it is named for this item's own number; otherwise
-  it holds another item's work — say which, and
-  STOP, or leave it with `ExitWorktree` (keeping it) before creating this item's worktree. The
+  it holds another item's work — say which, and STOP, or leave it with `ExitWorktree` (keeping it) before creating this item's worktree. The
   exception is the human saying otherwise, for this run or in their standing instructions — "no
   worktree", "don't use a worktree", "work in place", in any wording. Then answer *no* and branch
   in place, exactly as the *Without Superpowers* row for step 5 does. An override given with the

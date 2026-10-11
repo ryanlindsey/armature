@@ -137,8 +137,7 @@ When no child is left actionable, stop and report the whole stack with its merge
 report ends with a **Board repairs** section collecting every child's repairs, as each reported
 them, worked items apart from other items — or "none".
 
-`item_get`
-the epic; if it has a `parent`, `item_get` that too, and if its title starts `Spec:`, end the report
+`item_get` the epic; if it has a `parent`, `item_get` that too, and if its title starts `Spec:`, end the report
 with:
 "after the stack merges, close the epic, then the spec" — naming both refs. Armature closes neither.
 
@@ -178,10 +177,11 @@ merge order, and what needs a person.
   feeds the terminal condition.
 - **A dependency discovered mid-child is a ruling, not a red flag.** The child adds the
   blocker with `item_link` and reports it under repairs. The discovery then goes through
-  the prerequisite rule above, unchanged: an in-epic blocker whose work is reachable from the base
-  lets the child continue; an unworked in-epic blocker defers the child, unrecorded — it commits
+  the prerequisite rule above, unchanged. A discovered blocker that is closed with its PR merged,
+  or in the board's done status, satisfies it wherever it lives: carry on. Otherwise, an in-epic
+  blocker whose work is reachable from the base lets the child continue; an unworked in-epic blocker defers the child, unrecorded — it commits
   its work in progress, releases itself to todo and stops without a PR — and you come back once the
-  blocker has a PR; an out-of-epic blocker stops the child, recorded and skipped. A blocker the
+  blocker has a PR; an out-of-epic blocker not yet done stops the child, recorded and skipped. A blocker the
   brief named no head branch for cannot be shown reachable, so the child treats it as unworked. A
   child released to todo with a work-in-progress branch is picked up later by finding its own
   branch and rebasing it onto the base you name, and stacking means its base may now be the

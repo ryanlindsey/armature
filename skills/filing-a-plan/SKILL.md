@@ -79,15 +79,15 @@ this skill.
   wrong step, broken text, a missing or wrong blocker or parent — is repaired through armature, and
   you never reach for `gh` to do it:
   - title or body: `item_update`, passing the `version` from a fresh `item_get` as
-    `expectVersion`. On
-    `ConcurrentEditError` someone changed the item since you read it: `item_get` it again and
-    re-apply the edit to what is there now.
+    `expectVersion`. On `ConcurrentEditError` someone changed the item since you read it:
+    `item_get` it again and re-apply the edit to what is there now.
   - blockers or parent: `item_link` (`addBlockedBy`, `removeBlockedBy`, `parent`, or
     `clearParent: true`), never by editing `Depends on` lines through `item_update` — `item_link`
     keeps those lines in step with the links, and `item_update` refuses a body that disagrees with
     them (`DependsOnDriftError`).
   - when `item_link` raises, its message says what landed. `MissingLinkTargetError` or
-    `ConflictingLinkError`: nothing changed — fix the ref or the request and call again.
+    `ConflictingLinkError`, or an argument refusal such as `BareRefError` or
+    `InvalidArgumentError`: nothing changed — fix the ref or the request and call again.
     `UnclosedFenceError`: nothing was written — close the code fence with `item_update` first.
     `PartialLinkError`: run `item_get`, then repeat the same `item_link` call; the prose was not
     touched. `ProseOutOfStepError`: the links are right and the prose is not — `item_get`, then
@@ -105,8 +105,8 @@ this skill.
   `MissingBlockerError` — or an argument refusal such as `BareRefError` ("is not a work item
   reference") or `InvalidArgumentError` ("needs … to be") is raised before any write: fix the
   argument, then call again.
-- **Any other `item_create` error leaves the outcome unknown.** Do not call again; report it, and let the human
-  check whether the issue exists.
+- **Any other `item_create` error leaves the outcome unknown.** Do not call again; report it, and
+  let the human check whether the issue exists.
 - **A dry run cannot file a whole graph.** Under `ARMATURE_DRY_RUN` a created item has no ref, so
   nothing after the first `item_create` can name it as `parent` or in `blockedBy`. Predict the
   first write, report the rest as planned, and stop.

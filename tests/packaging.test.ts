@@ -920,6 +920,10 @@ describe('the filing skill repairs through armature, and reports it', () => {
   it('reports repairs in a Board repairs section', () => {
     expect(rules).toMatch(/Report what was filed[\s\S]*Board repairs/)
   })
+
+  it('never edits a Spec: body or gives a spec a blocker', () => {
+    expect(rules).toMatch(/never edit a `Spec:`[^.]*body[^.]*blocker/)
+  })
 })
 
 describe('working-the-board repairs any open item, and reports it', () => {
@@ -980,6 +984,13 @@ describe('working-an-epic carries repairs through the child report', () => {
   it('treats a dependency found mid-child as a ruling, not a red flag', () => {
     const rules = section(skill, 'Rules')
     expect(rules).toMatch(/mid-child[\s\S]*a ruling, not a red flag/i)
+    const midChild = /\*\*A dependency discovered mid-child[\s\S]*?(?=\n- \*\*)/.exec(rules)
+    expect(midChild, 'expected a "A dependency discovered mid-child" rule').not.toBeNull()
+    expect(midChild![0]).toMatch(/item_link/)
+    expect(midChild![0]).toMatch(/prerequisite rule above, unchanged/)
+    expect(midChild![0]).toMatch(/reachable from the base/)
+    expect(midChild![0]).toMatch(/unrecorded/)
+    expect(midChild![0]).toMatch(/out-of-epic[^.;]*recorded and skipped/)
     expect(rules).toMatch(/its own\s+branch[\s\S]*rebas/i)
   })
 })
