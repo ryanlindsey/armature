@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { BoardRef } from '../../config.js'
 import { formatRef, type WorkItemRef } from '../../ref.js'
 import type {
@@ -32,7 +33,7 @@ export type ItemDetail = BoardItem & {
   epic: WorkItemRef | null
   /** Items this one is blocked by, from GitHub's native issue dependencies. Never null. */
   blockedBy: WorkItemRef[]
-  /** `Issue.updatedAt`. Required here, unlike on BoardItem: GitHub always reports it. */
+  /** See itemVersion. Required here, unlike on BoardItem: GitHub always has one to report. */
   version: string
 }
 
@@ -216,8 +217,22 @@ export async function getItem(
     // is not called here in v1.
     epic: epicFromLink,
     blockedBy,
-    version: issue.updatedAt,
+    version: itemVersion(issue.updatedAt, issue.title, issue.body ?? ''),
   }
+}
+
+/**
+ * The opaque version updateItem compares: `Issue.updatedAt` plus a digest of title and body.
+ *
+ * updatedAt alone is not enough. It is reported to the second, so a person's edit landing in the
+ * same second as armature's read leaves it unchanged, and the check that exists to protect that
+ * edit would let it be overwritten. The digest closes that: any change to the text an edit
+ * replaces changes the version, whatever the clock says. updatedAt stays in for everything else
+ * GitHub counts as a change. Never parsed — callers compare it for equality and hand it back.
+ */
+function itemVersion(updatedAt: string, title: string, body: string): string {
+  const digest = createHash('sha256').update(`${title}\0${body}`).digest('hex').slice(0, 16)
+  return `${updatedAt}|${digest}`
 }
 
 export type ItemReader = (ref: WorkItemRef) => Promise<ItemDetail>
@@ -436,15 +451,16 @@ export class DependsOnDriftError extends Error {
     const list = (refs: WorkItemRef[]) => refs.map(formatRef).join(', ')
     const parts: string[] = []
     if (unlinked.length) {
-      parts.push(`says it depends on ${list(unlinked)}, but ${formatRef(ref)} is not blocked by them`)
+      const them = unlinked.length === 1 ? 'it' : 'them'
+      parts.push(`says it depends on ${list(unlinked)}, but ${formatRef(ref)} is not blocked by ${them}`)
     }
     if (unstated.length) {
       parts.push(`does not say it depends on ${list(unstated)}, which ${formatRef(ref)} is blocked by`)
     }
     super(
-      `The new body for ${formatRef(ref)} ${parts.join(', and ')}. Armature made no change. ` +
+      `The body for ${formatRef(ref)} ${parts.join(', and ')}. Armature made no change. ` +
         `Change blockers with item_link, which writes the link and the line together, or make ` +
-        `the body's \`Depends on \`owner/repo#N\`\` lines match the links.`,
+        `the body's \`\` Depends on \`owner/repo#N\` \`\` lines match the links.`,
     )
     this.name = 'DependsOnDriftError'
   }
@@ -469,6 +485,12 @@ export async function updateItem(
 ): Promise<ItemDetail> {
   const read: ItemReader = options.read ?? ((r) => getItem(client, board, r))
 
+  if (change.title === undefined && change.body === undefined) {
+    throw new Error(
+      `An edit to ${formatRef(ref)} must carry a title, a body, or both. Nothing was changed.`,
+    )
+  }
+
   const before = await read(ref)
   if (before.projectItemId === null) throw new NotOnBoardError(ref, board)
   if (before.version !== change.expectVersion) {
@@ -490,6 +512,8 @@ export async function updateItem(
 
   const title = change.title ?? before.title
   const body = change.body ?? before.body
+  // `version` stays the one read: it is the item's version now, and inventing the one an edit
+  // would produce is the dry-run lie this codebase keeps having to remove.
   if (options.dryRun) return { ...before, title, body, checklist: parseChecklist(body) }
 
   const variables: { issue: string; title?: string; body?: string } = { issue: before.id }

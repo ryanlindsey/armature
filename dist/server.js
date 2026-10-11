@@ -17378,6 +17378,9 @@ async function surveyEpic(client, snapshot, ref) {
   };
 }
 
+// server/providers/github/items.ts
+import { createHash } from "node:crypto";
+
 // server/providers/github/checklist.ts
 function codeMask(body) {
   const mask = [];
@@ -17592,8 +17595,12 @@ async function getItem(client, board, ref) {
     // is not called here in v1.
     epic: epicFromLink,
     blockedBy,
-    version: issue2.updatedAt
+    version: itemVersion(issue2.updatedAt, issue2.title, issue2.body ?? "")
   };
+}
+function itemVersion(updatedAt, title, body) {
+  const digest = createHash("sha256").update(`${title}\0${body}`).digest("hex").slice(0, 16);
+  return `${updatedAt}|${digest}`;
 }
 var StaleItemError = class extends Error {
   constructor(ref, expected, found) {
