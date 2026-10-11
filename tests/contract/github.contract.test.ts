@@ -32,6 +32,12 @@ let created = 0
 // An item whose body carries a task list, for the checklist block. Two entries unticked, because
 // the block ticks one and then needs another to attempt a refused batch with.
 const CHECKLIST = { owner: 'acme', repo: 'web', number: 40 }
+// An item the editing block may rename. Its own, so a renamed title cannot disturb the collision
+// the precondition depends on.
+const UPDATE = { owner: 'acme', repo: 'web', number: 41 }
+// Each node's updatedAt, as a count of edits: bumped by every issue edit, as GitHub bumps it.
+const edits = new Map<string, number>()
+const updatedAtOf = (id: string) => new Date(Date.UTC(2026, 0, 1, 0, 0, edits.get(id) ?? 0)).toISOString()
 const nodes = [
   issue('web', 1),
   issue('web', 278, EPIC),
@@ -41,6 +47,7 @@ const nodes = [
     ...issue('web', 40),
     body: '## Acceptance\n\n- [ ] first criterion\n- [x] second criterion\n- [ ] third criterion\n',
   },
+  issue('web', 41),
 ]
 
 // Rooted at repositoryOwner, matching BOARD_QUERY: it resolves a user account and an
@@ -88,10 +95,13 @@ const client = {
       } as any)
       return { createIssue: { issue: { id: `I-web-${number}`, number } } }
     }
-    // UPDATE_ISSUE_BODY: the checklist write. Rewrites the body a later read reports.
+    // UPDATE_ISSUE_BODY (the checklist write) and UPDATE_ISSUE (title and/or body). Applies only
+    // the variables sent, as GitHub leaves an omitted field alone, and bumps updatedAt.
     if (query.includes('updateIssue(')) {
       const node = nodes.find((n) => nodeId(n) === variables.issue)!
-      ;(node as any).body = variables.body
+      if (variables.title !== undefined) node.content.title = variables.title as string
+      if (variables.body !== undefined) (node as any).body = variables.body
+      edits.set(nodeId(node), (edits.get(nodeId(node)) ?? 0) + 1)
       return { updateIssue: { issue: { id: variables.issue } } }
     }
     if (query.includes('addProjectV2ItemById')) {
@@ -175,6 +185,7 @@ const client = {
           number: node.content.number,
           title: node.content.title,
           body: (node as any).body ?? '',
+          updatedAt: updatedAtOf(nodeId(node)),
           state: node.content.state,
           parent: node.content.parent,
           blockedBy: { pageInfo: { hasNextPage: false }, nodes: (node as any).blockedBy ?? [] },
@@ -200,5 +211,6 @@ describeBoardProvider(
     epic: EPIC,
     writes: { owner: 'acme', repo: 'web', issuesCreated: () => created },
     checklist: CHECKLIST,
+    update: UPDATE,
   },
 )

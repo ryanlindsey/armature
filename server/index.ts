@@ -136,6 +136,30 @@ export const TOOLS = [
       required: ['ref', 'entries'],
     },
   },
+  {
+    name: 'item_update',
+    description:
+      "Edit a work item's title and/or body. Pass the `version` from the item_get you based the " +
+      'edit on; the write is refused if the item changed since. A body whose Depends on lines ' +
+      "disagree with the item's blocker links is refused — change blockers with item_link. " +
+      'Verified by reading the item back.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'owner/repo#number' },
+        title: { type: 'string', description: 'Optional new title. Left unchanged if omitted.' },
+        body: {
+          type: 'string',
+          description: 'Optional new body, in full. Left unchanged if omitted; may be empty.',
+        },
+        expectVersion: {
+          type: 'string',
+          description: 'The `version` item_get reported for the item this edit was composed against.',
+        },
+      },
+      required: ['ref', 'expectVersion'],
+    },
+  },
 ]
 
 function ok(value: unknown) {
@@ -533,6 +557,51 @@ export async function dispatch(
         },
         options.logWrite,
       )
+      return ok(presentMutation(after, options.dryRun))
+    }
+
+    case 'item_update': {
+      const ref = await resolveRef(refArgument(name, 'ref', args.ref))
+      const expectVersion = requiredString(name, 'expectVersion', args.expectVersion)
+      // `null` means "not asked", as for every optional argument here. A present title must carry
+      // something; a present body may be empty.
+      const title =
+        args.title === undefined || args.title === null
+          ? undefined
+          : requiredString(name, 'title', args.title)
+      const body =
+        args.body === undefined || args.body === null ? undefined : requiredText(name, 'body', args.body)
+      if (title === undefined && body === undefined) {
+        throw new InvalidArgumentError(name, 'title or body', 'at least one of them', undefined)
+      }
+
+      const before = await provider.getItem(ref)
+      // Spread rather than `title: undefined`: the provider sends only the fields the change
+      // carries, and a key present-but-undefined is a field it would have to second-guess.
+      const after = await provider.update(ref, {
+        expectVersion,
+        ...(title !== undefined ? { title } : {}),
+        ...(body !== undefined ? { body } : {}),
+      })
+      if (title !== undefined) {
+        logMutation(
+          { ref: formatRef(ref), field: 'Title', before: before.title, after: after.title, dryRun: options.dryRun },
+          options.logWrite,
+        )
+      }
+      // By version, never by text: an issue body is too long for a log line and may not be ours.
+      if (body !== undefined) {
+        logMutation(
+          {
+            ref: formatRef(ref),
+            field: 'Body',
+            before: before.version ?? null,
+            after: after.version ?? null,
+            dryRun: options.dryRun,
+          },
+          options.logWrite,
+        )
+      }
       return ok(presentMutation(after, options.dryRun))
     }
 

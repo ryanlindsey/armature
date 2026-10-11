@@ -18,6 +18,11 @@ const OPTIONS = [
 function makeClient(initialBody = '') {
   let status = 'Todo'
   let body = initialBody
+  let title = 'Item 5'
+  // Bumped by every issue edit, as GitHub's updatedAt is, so a version read before an edit is
+  // stale after it.
+  let edits = 0
+  const updatedAt = () => new Date(Date.UTC(2026, 0, 1, 0, 0, edits)).toISOString()
   const surveys = { count: 0 }
 
   const boardNodes = () => [
@@ -26,7 +31,7 @@ function makeClient(initialBody = '') {
       fieldValueByName: { name: status },
       content: {
         number: 5,
-        title: 'Item 5',
+        title,
         state: 'OPEN',
         repository: { owner: { login: 'acme' }, name: 'web' },
         parent: null,
@@ -37,7 +42,9 @@ function makeClient(initialBody = '') {
   const client = {
     graphql: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
       if (query.includes('updateIssue(')) {
-        body = variables!.body as string
+        if (variables!.title !== undefined) title = variables!.title as string
+        if (variables!.body !== undefined) body = variables!.body as string
+        edits++
         return { updateIssue: { issue: { id: 'I_1' } } }
       }
       if (query.includes('updateProjectV2ItemFieldValue')) {
@@ -58,8 +65,9 @@ function makeClient(initialBody = '') {
             issue: {
               id: 'I_1',
               number: 5,
-              title: 'Item 5',
+              title,
               body,
+              updatedAt: updatedAt(),
               state: 'OPEN',
               parent: null,
               projectItems: {
@@ -97,6 +105,7 @@ function makeClient(initialBody = '') {
     surveys,
     currentStatus: () => status,
     currentBody: () => body,
+    currentTitle: () => title,
   }
 }
 
@@ -226,6 +235,54 @@ describe('GitHubBoardProvider.check', () => {
 
     expect(currentBody()).toBe('- [ ] first')
     expect(after.checklist?.[0]).toMatchObject({ text: 'first', checked: true })
+  })
+})
+
+// Unlike a checklist, a title IS part of BoardSnapshot, so a cached snapshot across this write
+// would report the old title from board_survey.
+describe('GitHubBoardProvider.update', () => {
+  it('writes the edit and re-reads the board afterwards', async () => {
+    const { client, surveys, currentTitle } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.survey()
+    const surveysBefore = surveys.count
+    const { version } = await provider.getItem(ref)
+    const after = await provider.update(ref, { title: 'Renamed', expectVersion: version! })
+    const snapshot = await provider.survey()
+
+    expect(currentTitle()).toBe('Renamed')
+    expect(after.title).toBe('Renamed')
+    expect(after.version).not.toBe(version)
+    expect(snapshot.items[0]!.title).toBe('Renamed')
+    expect(surveys.count).toBe(surveysBefore + 1)
+  })
+
+  it('re-reads the board even when the write is refused', async () => {
+    const { client, surveys, currentTitle } = makeClient()
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo' })
+
+    await provider.survey()
+    const surveysBefore = surveys.count
+    await expect(
+      provider.update(ref, { title: 'Renamed', expectVersion: 'not-the-version' }),
+    ).rejects.toThrow(/has changed since it was read/)
+    await provider.survey()
+
+    expect(currentTitle()).toBe('Item 5')
+    expect(surveys.count).toBe(surveysBefore + 1)
+  })
+
+  it('sends nothing under dry run, and reports the predicted item', async () => {
+    const { client, currentBody } = makeClient('old')
+    const provider = new GitHubBoardProvider(client, board, { boardSource: 'repo', dryRun: true })
+
+    const { version } = await provider.getItem(ref)
+    const after = await provider.update(ref, { body: 'new', expectVersion: version! })
+
+    expect(currentBody()).toBe('old')
+    expect((after as { body?: string }).body).toBe('new')
+    expect(after.version).toBe(version)
   })
 })
 

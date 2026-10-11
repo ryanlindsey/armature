@@ -20,11 +20,16 @@ import type { BoardProvider } from '../../server/providers/types.js'
  * has no task list to tick. A harness passes it — an item on the board whose checklist holds at
  * least two unticked entries and one ticked — to declare that its adapter implements `check`, and the block
  * holds it to that. Absent, the block is skipped.
+ *
+ * `update` is optional for a different reason: `BoardProvider.update` is required of every
+ * adapter, but the suite edits the item it is handed, so a harness must name one it is willing to
+ * have renamed. An on-board item; absent, the block is skipped.
  */
 export type ContractFixture = {
   epic?: WorkItemRef
   writes?: { owner: string; repo: string; issuesCreated: () => number }
   checklist?: WorkItemRef
+  update?: WorkItemRef
 }
 
 /**
@@ -251,6 +256,44 @@ export function describeBoardProvider(
 
         const after = await provider.getItem(ref)
         expect(after.checklist).toEqual(before.checklist)
+      })
+    })
+
+    // Required of every adapter: every tracker can edit an item's title and description. What
+    // the contract pins is the guard — an edit composed against an old read must not land.
+    describe.skipIf(!fixture.update)('editing items', () => {
+      const ref = fixture.update!
+
+      it('edits the title when given the current version, and reads it back so', async () => {
+        const provider = await makeProvider()
+        const before = await provider.getItem(ref)
+        expect(before.version, 'getItem must report a version for an edit to hand back').toBeDefined()
+        const title = `${before.title} (edited)`
+
+        const returned = await provider.update(ref, { title, expectVersion: before.version! })
+
+        const after = await provider.getItem(ref)
+        expect(returned.title).toBe(title)
+        expect(after.title).toBe(title)
+        expect(after.version).toBeDefined()
+        expect(after.version).not.toBe(before.version)
+      })
+
+      it('refuses a stale version and leaves the item unchanged', async () => {
+        const provider = await makeProvider()
+        const stale = await provider.getItem(ref)
+        expect(stale.version, 'getItem must report a version for an edit to hand back').toBeDefined()
+        // Someone else's edit lands between the read and the write.
+        await provider.update(ref, { title: `${stale.title} (theirs)`, expectVersion: stale.version! })
+        const current = await provider.getItem(ref)
+
+        await expect(
+          provider.update(ref, { title: `${stale.title} (ours)`, expectVersion: stale.version! }),
+        ).rejects.toThrow()
+
+        const after = await provider.getItem(ref)
+        expect(after.title).toBe(current.title)
+        expect(after.version).toBe(current.version)
       })
     })
 

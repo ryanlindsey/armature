@@ -17523,6 +17523,44 @@ function applyChecks(ref, body, requests) {
   return { body: out.join(""), changed };
 }
 
+// server/providers/github/depends.ts
+var CANONICAL = /^Depends on `([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#([1-9]\d*)`$/;
+function parseDependsOn(body) {
+  const lines = splitLines(body);
+  const mask = codeMask(body);
+  const seen = /* @__PURE__ */ new Set();
+  const refs = [];
+  lines.forEach((line, i) => {
+    const ref = canonicalRef(line.text, mask[i]);
+    if (!ref || seen.has(refKey(ref))) return;
+    seen.add(refKey(ref));
+    refs.push(ref);
+  });
+  return refs;
+}
+function sameRefSet(a, b) {
+  const left = new Set(a.map(refKey));
+  const right = new Set(b.map(refKey));
+  return left.size === right.size && [...left].every((key2) => right.has(key2));
+}
+function splitLines(body) {
+  const parts = body.split(/(\r?\n)/);
+  const lines = [];
+  for (let i = 0; i < parts.length; i += 2) lines.push({ text: parts[i], eol: parts[i + 1] ?? "" });
+  return lines;
+}
+function canonicalRef(text, isCode) {
+  if (isCode) return null;
+  const match2 = CANONICAL.exec(text.trim());
+  if (!match2) return null;
+  const number3 = Number(match2[3]);
+  if (!Number.isSafeInteger(number3)) return null;
+  return { owner: match2[1], repo: match2[2], number: number3 };
+}
+function refKey(ref) {
+  return `${ref.owner.toLowerCase()}/${ref.repo.toLowerCase()}#${ref.number}`;
+}
+
 // server/providers/github/items.ts
 var NotOnBoardError = class extends Error {
   constructor(ref, board) {
@@ -17692,6 +17730,77 @@ async function checkEntries(client, board, ref, requests, options = {}) {
         `The body ${changed > 0 ? "was sent, and may or may not have landed" : "was not rewritten"}. Run item_get on ${formatRef(ref)} to see its checklist as it stands before retrying.`
       );
     }
+  }
+  return after;
+}
+var UPDATE_ISSUE = `
+mutation($issue:ID!,$title:String,$body:String){
+  updateIssue(input:{id:$issue,title:$title,body:$body}){ issue{ id } }
+}`;
+var ConcurrentEditError = class extends Error {
+  constructor(ref, expected, found) {
+    super(
+      `${formatRef(ref)} has changed since it was read: the edit expected version "${expected}" but the item is at "${found ?? "unknown"}". Armature made no change. Run item_get on ${formatRef(ref)} and re-apply the edit to the item as it stands, passing its new version.`
+    );
+    this.name = "ConcurrentEditError";
+  }
+};
+var EmptyChangeError = class extends Error {
+  constructor(ref) {
+    super(`An edit to ${formatRef(ref)} must carry a title, a body, or both. Nothing was changed.`);
+    this.name = "EmptyChangeError";
+  }
+};
+var DependsOnDriftError = class extends Error {
+  constructor(ref, unlinked, unstated) {
+    const list = (refs) => refs.map(formatRef).join(", ");
+    const parts = [];
+    if (unlinked.length) {
+      const them = unlinked.length === 1 ? "it" : "them";
+      parts.push(`says it depends on ${list(unlinked)}, but ${formatRef(ref)} is not blocked by ${them}`);
+    }
+    if (unstated.length) {
+      parts.push(`does not say it depends on ${list(unstated)}, which ${formatRef(ref)} is blocked by`);
+    }
+    super(
+      `The body for ${formatRef(ref)} ${parts.join(", and ")}. Armature made no change. Change blockers with item_link, which writes the link and the line together, or make the body's \`\` Depends on \`owner/repo#N\` \`\` lines match the links.`
+    );
+    this.name = "DependsOnDriftError";
+  }
+};
+async function updateItem(client, board, ref, change, options = {}) {
+  const read = options.read ?? ((r) => getItem(client, board, r));
+  if (change.title === void 0 && change.body === void 0) throw new EmptyChangeError(ref);
+  const before = await read(ref);
+  if (before.projectItemId === null) throw new NotOnBoardError(ref, board);
+  if (before.version !== change.expectVersion) {
+    throw new ConcurrentEditError(ref, change.expectVersion, before.version);
+  }
+  if (change.body !== void 0) {
+    const stated = parseDependsOn(change.body);
+    if (!sameRefSet(stated, before.blockedBy)) {
+      throw new DependsOnDriftError(
+        ref,
+        stated.filter((s) => !before.blockedBy.some((b) => sameRef(b, s))),
+        before.blockedBy.filter((b) => !stated.some((s) => sameRef(s, b)))
+      );
+    }
+  }
+  const title = change.title ?? before.title;
+  const body = change.body ?? before.body;
+  if (options.dryRun) return { ...before, title, body, checklist: parseChecklist(body) };
+  const variables = { issue: before.id };
+  if (change.title !== void 0) variables.title = change.title;
+  if (change.body !== void 0) variables.body = change.body;
+  const sent = title !== before.title || body !== before.body;
+  if (sent) await client.graphql(UPDATE_ISSUE, variables);
+  const after = await read(ref);
+  const advice = `The edit ${sent ? "was sent, and may or may not have landed" : "was not sent: nothing differed"}. Run item_get on ${formatRef(ref)} to see it as it stands before retrying.`;
+  if (change.title !== void 0 && after.title !== change.title) {
+    throw new UnverifiedWriteError(ref, change.title, after.title, advice);
+  }
+  if (change.body !== void 0 && after.body !== change.body) {
+    throw new UnverifiedWriteError(ref, "the requested body", "a different body", advice);
   }
   return after;
 }
@@ -17981,6 +18090,14 @@ var GitHubBoardProvider = class {
       this.invalidate();
     }
   }
+  // A title is part of BoardSnapshot, so unlike `check` this write does stale the cache.
+  async update(ref, change) {
+    try {
+      return await updateItem(this.client, this.board, ref, change, { dryRun: this.dryRun });
+    } finally {
+      this.invalidate();
+    }
+  }
   async create(input) {
     const snapshot = await this.survey();
     try {
@@ -18151,6 +18268,26 @@ var TOOLS = [
         }
       },
       required: ["ref", "entries"]
+    }
+  },
+  {
+    name: "item_update",
+    description: "Edit a work item's title and/or body. Pass the `version` from the item_get you based the edit on; the write is refused if the item changed since. A body whose Depends on lines disagree with the item's blocker links is refused \u2014 change blockers with item_link. Verified by reading the item back.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "owner/repo#number" },
+        title: { type: "string", description: "Optional new title. Left unchanged if omitted." },
+        body: {
+          type: "string",
+          description: "Optional new body, in full. Left unchanged if omitted; may be empty."
+        },
+        expectVersion: {
+          type: "string",
+          description: "The `version` item_get reported for the item this edit was composed against."
+        }
+      },
+      required: ["ref", "expectVersion"]
     }
   }
 ];
@@ -18385,6 +18522,40 @@ async function dispatch(provider, name, args, options) {
         },
         options.logWrite
       );
+      return ok(presentMutation(after, options.dryRun));
+    }
+    case "item_update": {
+      const ref = await resolveRef(refArgument(name, "ref", args.ref));
+      const expectVersion = requiredString(name, "expectVersion", args.expectVersion);
+      const title = args.title === void 0 || args.title === null ? void 0 : requiredString(name, "title", args.title);
+      const body = args.body === void 0 || args.body === null ? void 0 : requiredText(name, "body", args.body);
+      if (title === void 0 && body === void 0) {
+        throw new InvalidArgumentError(name, "title or body", "at least one of them", void 0);
+      }
+      const before = await provider.getItem(ref);
+      const after = await provider.update(ref, {
+        expectVersion,
+        ...title !== void 0 ? { title } : {},
+        ...body !== void 0 ? { body } : {}
+      });
+      if (title !== void 0) {
+        logMutation(
+          { ref: formatRef(ref), field: "Title", before: before.title, after: after.title, dryRun: options.dryRun },
+          options.logWrite
+        );
+      }
+      if (body !== void 0) {
+        logMutation(
+          {
+            ref: formatRef(ref),
+            field: "Body",
+            before: before.version ?? null,
+            after: after.version ?? null,
+            dryRun: options.dryRun
+          },
+          options.logWrite
+        );
+      }
       return ok(presentMutation(after, options.dryRun));
     }
     default:
