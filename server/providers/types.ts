@@ -161,4 +161,13 @@ export interface BoardProvider {
    * and so is a field an adapter must honour or refuse. dispatch reports the absence by name.
    */
   check?(ref: WorkItemRef, entries: ChecklistRequest[]): Promise<BoardItem>
+  /**
+   * Edit the item's title and/or body, only if it is still at `change.expectVersion`, and read it
+   * back to verify.
+   *
+   * Required, unlike `check`: every tracker can edit an item's title and description, so there
+   * is no honest reason for an adapter to decline. A refusal for a stale version must leave the
+   * item unchanged.
+   */
+  update(ref: WorkItemRef, change: ItemChange): Promise<BoardItem>
 }

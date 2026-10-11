@@ -34,6 +34,7 @@ function makeProvider(overrides: Partial<BoardProvider> = {}): BoardProvider {
     claim: vi.fn(),
     setStatus: vi.fn(),
     create: vi.fn(),
+    update: vi.fn(),
     ...overrides,
   }
 }
@@ -896,6 +897,128 @@ describe('item_check', () => {
 
   it('leaves a real result unmarked', async () => {
     const result = await dispatch(withCheck(), 'item_check', { ref: 'acme/web#7', entries: one }, opts)
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBeUndefined()
+  })
+})
+
+describe('item_update', () => {
+  const REF = { owner: 'acme', repo: 'web', number: 7 }
+  const BODY = 'A body that must never reach the mutation log.'
+  const item = (title: string, version: string, body = 'old') => ({
+    ref: REF, title, body, version, status: 'In progress',
+  })
+  const withUpdate = () =>
+    makeProvider({
+      getItem: vi.fn().mockResolvedValue(item('Old title', 'v1')),
+      update: vi.fn().mockResolvedValue(item('New title', 'v2', BODY)),
+    })
+  const opts = { dryRun: false, logWrite: () => {} }
+  const base = { ref: 'acme/web#7', expectVersion: 'v1' }
+
+  it('is advertised with exactly the arguments the handler accepts', () => {
+    const tool = TOOLS.find((t) => t.name === 'item_update')
+    expect(tool).toBeDefined()
+    expect(Object.keys(tool!.inputSchema.properties)).toEqual(['ref', 'title', 'body', 'expectVersion'])
+    expect(tool!.inputSchema.required).toEqual(['ref', 'expectVersion'])
+  })
+
+  it('describes the version guard, the Depends on refusal and the read-back', () => {
+    const tool = TOOLS.find((t) => t.name === 'item_update')!
+    expect(tool.description).toMatch(/`version` from the item_get/)
+    expect(tool.description).toMatch(/item_link/)
+    expect(tool.description).toMatch(/reading the item back/)
+    expect(tool.description).not.toMatch(/updatedAt/)
+  })
+
+  it('refuses a bare issue number', async () => {
+    const provider = withUpdate()
+    await expect(
+      dispatch(provider, 'item_update', { ...base, ref: 7, title: 'x' }, opts),
+    ).rejects.toThrow(BareRefError)
+    expect(provider.update).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a missing expectVersion', { ref: 'acme/web#7', title: 'x' }],
+    ['a blank expectVersion', { ...base, expectVersion: ' ', title: 'x' }],
+    ['neither a title nor a body', { ...base }],
+    ['a null title and body', { ...base, title: null, body: null }],
+    ['an empty title', { ...base, title: '' }],
+    ['a non-string title', { ...base, title: 5 }],
+    ['a non-string body', { ...base, body: 5 }],
+  ])('refuses %s, and writes nothing', async (_label, args) => {
+    const provider = withUpdate()
+    await expect(dispatch(provider, 'item_update', args, opts)).rejects.toThrow(InvalidArgumentError)
+    expect(provider.update).not.toHaveBeenCalled()
+  })
+
+  it('names both fields when neither is given', async () => {
+    await expect(dispatch(withUpdate(), 'item_update', base, opts)).rejects.toThrow(/title or body/)
+  })
+
+  it('passes an empty body through', async () => {
+    const provider = withUpdate()
+    await dispatch(provider, 'item_update', { ...base, body: '' }, opts)
+    expect(provider.update).toHaveBeenCalledWith(REF, { expectVersion: 'v1', body: '' })
+  })
+
+  it('hands the provider no title key when only a body was given', async () => {
+    const provider = withUpdate()
+    await dispatch(provider, 'item_update', { ...base, body: BODY }, opts)
+    const change = (provider.update as ReturnType<typeof vi.fn>).mock.calls[0]![1]
+    expect(change).toEqual({ expectVersion: 'v1', body: BODY })
+    expect('title' in change).toBe(false)
+  })
+
+  it('hands the provider no body key when only a title was given', async () => {
+    const provider = withUpdate()
+    await dispatch(provider, 'item_update', { ...base, title: 'New title' }, opts)
+    const change = (provider.update as ReturnType<typeof vi.fn>).mock.calls[0]![1]
+    expect(change).toEqual({ expectVersion: 'v1', title: 'New title' })
+    expect('body' in change).toBe(false)
+  })
+
+  it('returns what the provider read back', async () => {
+    const result = await dispatch(withUpdate(), 'item_update', { ...base, title: 'New title' }, opts)
+    expect(textOf(result)).toEqual(item('New title', 'v2', BODY))
+  })
+
+  it('logs the title change, and the body change by version, never by its text', async () => {
+    const lines: string[] = []
+    await dispatch(withUpdate(), 'item_update', { ...base, title: 'New title', body: BODY }, {
+      ...opts, logWrite: (l) => lines.push(l),
+    })
+    expect(lines).toHaveLength(2)
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      ref: 'acme/web#7', field: 'Title', before: 'Old title', after: 'New title', dryRun: false,
+    })
+    expect(JSON.parse(lines[1]!)).toMatchObject({
+      ref: 'acme/web#7', field: 'Body', before: 'v1', after: 'v2', dryRun: false,
+    })
+    for (const line of lines) expect(line).not.toContain(BODY)
+  })
+
+  it('logs only the field that was asked for', async () => {
+    const lines: string[] = []
+    await dispatch(withUpdate(), 'item_update', { ...base, body: BODY }, {
+      ...opts, logWrite: (l) => lines.push(l),
+    })
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0]!).field).toBe('Body')
+    expect(lines[0]).not.toContain(BODY)
+  })
+
+  it('marks a dry run, in the result and in the log line', async () => {
+    const lines: string[] = []
+    const result = await dispatch(withUpdate(), 'item_update', { ...base, title: 'New title' }, {
+      dryRun: true, logWrite: (l) => lines.push(l),
+    })
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBe(true)
+    expect(JSON.parse(lines[0]!).dryRun).toBe(true)
+  })
+
+  it('leaves a real result unmarked', async () => {
+    const result = await dispatch(withUpdate(), 'item_update', { ...base, title: 'New title' }, opts)
     expect((textOf(result) as Record<string, unknown>).dryRun).toBeUndefined()
   })
 })

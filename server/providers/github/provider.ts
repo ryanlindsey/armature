@@ -7,11 +7,12 @@ import type {
   ChecklistRequest,
   CreateInput,
   EpicSurvey,
+  ItemChange,
 } from '../types.js'
 import { surveyBoard } from './board.js'
 import type { GitHubClient } from './client.js'
 import { surveyEpic } from './epic.js'
-import { checkEntries, claim, createItem, getItem, setStatus } from './items.js'
+import { checkEntries, claim, createItem, getItem, setStatus, updateItem } from './items.js'
 
 export type ProviderOptions = {
   /**
@@ -92,6 +93,15 @@ export class GitHubBoardProvider implements BoardProvider {
   async check(ref: WorkItemRef, entries: ChecklistRequest[]): Promise<BoardItem> {
     try {
       return await checkEntries(this.client, this.board, ref, entries, { dryRun: this.dryRun })
+    } finally {
+      this.invalidate()
+    }
+  }
+
+  // A title is part of BoardSnapshot, so unlike `check` this write does stale the cache.
+  async update(ref: WorkItemRef, change: ItemChange): Promise<BoardItem> {
+    try {
+      return await updateItem(this.client, this.board, ref, change, { dryRun: this.dryRun })
     } finally {
       this.invalidate()
     }

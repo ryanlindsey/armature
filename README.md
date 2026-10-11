@@ -154,16 +154,17 @@ it's about to do.
 
 ## Tools
 
-The MCP server exposes eight tools:
+The MCP server exposes nine tools:
 
 | tool | does |
 | --- | --- |
 | `board_next` | The next actionable item, with the reason it won — or a blocked explanation. Narrow it with `repo` or `epic`. Never returns an item titled `Spec:` or `Epic:`, and names the todo items it skipped for that title. |
 | `board_survey` | A normalized snapshot of the whole board: items, repositories, statuses, collisions. |
-| `item_get` | One work item's body, status, task-list checklist (each entry's text, state and nearest heading), and epic (with the repository the epic lives in). |
+| `item_get` | One work item's body, status, task-list checklist (each entry's text, state and nearest heading), epic (with the repository the epic lives in), and an opaque `version` to hand back to `item_update`. |
 | `item_claim` | Move an item to the board's claimed status. Verified before and after the write. |
 | `item_status` | Move an item to any status the board offers. Verified before and after the write. |
 | `item_check` | Set entries on an item's task-list checklist, each addressed by its exact text as `item_get` reports it. Every entry must match exactly once or nothing is written, and the result is read back and verified. |
+| `item_update` | Edit an item's title, body, or both. Pass the `version` from the `item_get` the edit was based on: if the item has changed since, the edit is refused and nothing is written. A body whose `Depends on` lines disagree with the item's blocker links is refused too — change blockers with `item_link`. The result is read back and verified. |
 | `item_create` | Create an issue, add it to the board, and set its status — todo unless `status` names another — then optionally file it under a `parent` and mark it blocked by `blockedBy`, so `board_next` can return it, correctly ranked, without a second call. Each step is verified, and a failure says exactly which steps landed. |
 | `epic_survey` | An epic and its children in working order: each child's status, labels, blockers, and linked pull requests with their branches, plus which child is next and why — the same answer `board_next` gives. A sub-issue that is not on the board is reported separately, never dropped. |
 
