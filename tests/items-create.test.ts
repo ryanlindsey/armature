@@ -190,6 +190,7 @@ function fakeBoard(
     parent,
     epic: parent,
     blockedBy: options.blockLandsAs ?? blockedBy,
+    version: 'v1',
   })
 
   return { client, read, sent, linkVariables: () => linkVariables, blockVariables }

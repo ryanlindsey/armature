@@ -9,7 +9,23 @@ export type BoardItem = {
   state: 'OPEN' | 'CLOSED'
   parent: WorkItemRef | null
   checklist?: ChecklistEntry[]
+  /**
+   * An opaque token that changes whenever the item's content changes, for a caller to hand back
+   * to an edit as "only if nothing has changed since I read it". Compared for equality and never
+   * parsed. Optional because a tracker that reports no such token has none to give; required on
+   * ItemDetail. GitHub: `Issue.updatedAt`.
+   */
+  version?: string
 }
+
+/**
+ * An edit to an item's title and/or body. A field left out is left unchanged.
+ *
+ * `expectVersion` is the `version` the caller read: the edit is refused, with nothing written,
+ * if the item has changed since. Required because an edit composed against an old body would
+ * otherwise overwrite whatever a person wrote in between.
+ */
+export type ItemChange = { title?: string; body?: string; expectVersion: string }
 
 /**
  * One task-list entry in a work item's body.

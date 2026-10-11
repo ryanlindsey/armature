@@ -17378,6 +17378,9 @@ async function surveyEpic(client, snapshot, ref) {
   };
 }
 
+// server/providers/github/items.ts
+import { createHash } from "node:crypto";
+
 // server/providers/github/checklist.ts
 function codeMask(body) {
   const mask = [];
@@ -17533,7 +17536,7 @@ var ITEM_QUERY = `
 query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
     issue(number:$number){
-      id number title body state
+      id number title body state updatedAt
       parent{ number repository{ owner{ login } name } }
       blockedBy(first:50){ pageInfo{ hasNextPage } nodes{ number repository{ owner{ login } name } } }
       projectItems(first:100){
@@ -17591,8 +17594,13 @@ async function getItem(client, board, ref) {
     // Parent link only — see the comment above parseEpicFromBody for why the body fallback
     // is not called here in v1.
     epic: epicFromLink,
-    blockedBy
+    blockedBy,
+    version: itemVersion(issue2.updatedAt, issue2.title, issue2.body ?? "")
   };
+}
+function itemVersion(updatedAt, title, body) {
+  const digest = createHash("sha256").update(`${title}\0${body}`).digest("hex").slice(0, 16);
+  return `${updatedAt}|${digest}`;
 }
 var StaleItemError = class extends Error {
   constructor(ref, expected, found) {
@@ -17811,7 +17819,8 @@ async function createItem(client, board, snapshot, input, options = {}) {
       projectItemId: "(dry-run)",
       parent: input.parent ?? null,
       epic: input.parent ?? null,
-      blockedBy: blockers
+      blockedBy: blockers,
+      version: "(dry-run)"
     };
   }
   const repo = await client.graphql(REPO_ID, { owner: input.owner, name: input.repo });
