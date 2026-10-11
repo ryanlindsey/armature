@@ -24,12 +24,18 @@ import type { BoardProvider } from '../../server/providers/types.js'
  * `update` is optional for a different reason: `BoardProvider.update` is required of every
  * adapter, but the suite edits the item it is handed, so a harness must name one it is willing to
  * have renamed. An on-board item; absent, the block is skipped.
+ *
+ * `links` is optional because `BoardProvider.link` is: keeping `Depends on` prose in step with the
+ * links is a Markdown-body shape, and an adapter that cannot do that declines the method. A
+ * harness passes an on-board `item` with no blockers and an existing `blocker` to declare that its
+ * adapter implements `link`, and the block holds it to keeping links and lines together.
  */
 export type ContractFixture = {
   epic?: WorkItemRef
   writes?: { owner: string; repo: string; issuesCreated: () => number }
   checklist?: WorkItemRef
   update?: WorkItemRef
+  links?: { item: WorkItemRef; blocker: WorkItemRef }
 }
 
 /**
@@ -294,6 +300,56 @@ export function describeBoardProvider(
         const after = await provider.getItem(ref)
         expect(after.title).toBe(current.title)
         expect(after.version).toBe(current.version)
+      })
+    })
+
+    // Optional capability, like checklists: what it pins is that a link and its Depends on line
+    // land and leave together, each read back by an independent getItem rather than trusted from
+    // the write's own return value.
+    describe.skipIf(!fixture.links)('changing links, if the adapter keeps prose in step', () => {
+      const { item, blocker } = fixture.links ?? ({} as NonNullable<ContractFixture['links']>)
+      const blockersOf = (read: unknown) => (read as { blockedBy?: WorkItemRef[] }).blockedBy
+      const bodyOf = (read: unknown) => (read as { body?: string }).body ?? ''
+      const line = () => `Depends on \`${formatRef(blocker)}\``
+      const lineCount = (body: string) =>
+        body.split(/\r?\n/).filter((l) => l.trim() === line()).length
+
+      it('adds a blocker and states it in a Depends on line, read back so', async () => {
+        const provider = await makeProvider()
+        expect(provider.link, 'the harness named a links item, so the adapter must implement link')
+          .toBeDefined()
+
+        await provider.link!(item, { addBlockedBy: [blocker] })
+
+        const after = await provider.getItem(item)
+        expect(blockersOf(after), 'getItem must report blockedBy').toBeDefined()
+        expect(blockersOf(after)!.map(formatRef)).toContain(formatRef(blocker))
+        expect(lineCount(bodyOf(after))).toBe(1)
+      })
+
+      it('removes it and its line again', async () => {
+        const provider = await makeProvider()
+        // Idempotent, so this holds whether or not the test above ran first.
+        await provider.link!(item, { addBlockedBy: [blocker] })
+
+        await provider.link!(item, { removeBlockedBy: [blocker] })
+
+        const after = await provider.getItem(item)
+        expect(blockersOf(after)!.map(formatRef)).not.toContain(formatRef(blocker))
+        expect(lineCount(bodyOf(after))).toBe(0)
+      })
+
+      it('refuses a blocker that does not exist and changes nothing', async () => {
+        const provider = await makeProvider()
+        const before = await provider.getItem(item)
+        const missing = { ...blocker, number: 999_999 }
+
+        await expect(provider.link!(item, { addBlockedBy: [missing] })).rejects.toThrow()
+
+        const after = await provider.getItem(item)
+        expect(blockersOf(after)).toEqual(blockersOf(before))
+        expect(bodyOf(after)).toBe(bodyOf(before))
+        expect(after.version).toBe(before.version)
       })
     })
 

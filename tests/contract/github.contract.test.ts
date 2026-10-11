@@ -35,6 +35,9 @@ const CHECKLIST = { owner: 'acme', repo: 'web', number: 40 }
 // An item the editing block may rename. Its own, so a renamed title cannot disturb the collision
 // the precondition depends on.
 const UPDATE = { owner: 'acme', repo: 'web', number: 41 }
+// An item the links block may block and unblock, by a blocker no other block reads the links of.
+// Its own, so a Depends on line written into its body cannot disturb the editing block's item.
+const LINKS = { item: { owner: 'acme', repo: 'web', number: 42 }, blocker: { owner: 'acme', repo: 'web', number: 12 } }
 // Each node's updatedAt, as a count of edits: bumped by every issue edit, as GitHub bumps it.
 const edits = new Map<string, number>()
 const updatedAtOf = (id: string) => new Date(Date.UTC(2026, 0, 1, 0, 0, edits.get(id) ?? 0)).toISOString()
@@ -48,6 +51,7 @@ const nodes = [
     body: '## Acceptance\n\n- [ ] first criterion\n- [x] second criterion\n- [ ] third criterion\n',
   },
   issue('web', 41),
+  { ...issue('web', 42), body: 'An item whose blockers the links block changes.\n' },
 ]
 
 // Rooted at repositoryOwner, matching BOARD_QUERY: it resolves a user account and an
@@ -122,6 +126,32 @@ const client = {
         { number: blocker.content.number, repository: blocker.content.repository },
       ]
       return { addBlockedBy: { issue: { id: variables.blocked } } }
+    }
+    if (query.includes('removeBlockedBy')) {
+      const blocked = nodes.find((n) => nodeId(n) === variables.blocked)!
+      const blocker = nodes.find((n) => nodeId(n) === variables.blocker)!
+      ;(blocked as any).blockedBy = ((blocked as any).blockedBy ?? []).filter(
+        (b: any) => !(b.number === blocker.content.number && b.repository.name === blocker.content.repository.name),
+      )
+      return { removeBlockedBy: { issue: { id: variables.blocked } } }
+    }
+    // ISSUE_IDENTITY, which linkItem resolves every target through: the id plus GitHub's own
+    // spelling of the ref. NOT_FOUND for a missing issue, as PARENT_ID below and the real client.
+    if (query.includes('issue(number:$number){ id number repository')) {
+      const node = nodes.find(
+        (n) => n.content.repository.name === variables.name && n.content.number === variables.number,
+      )
+      if (!node) {
+        throw new GraphQLError(
+          `Could not resolve to an Issue with the number of ${variables.number}.`,
+          ['NOT_FOUND'],
+        )
+      }
+      return {
+        repository: {
+          issue: { id: nodeId(node), number: node.content.number, repository: node.content.repository },
+        },
+      }
     }
     // REPO_ID: the repository's own node id.
     if (/repository\(owner:\$owner,name:\$name\)\{ id \}/.test(query)) {
@@ -212,5 +242,6 @@ describeBoardProvider(
     writes: { owner: 'acme', repo: 'web', issuesCreated: () => created },
     checklist: CHECKLIST,
     update: UPDATE,
+    links: LINKS,
   },
 )

@@ -8,11 +8,13 @@ import type {
   CreateInput,
   EpicSurvey,
   ItemChange,
+  LinkChange,
+  LinkedItem,
 } from '../types.js'
 import { surveyBoard } from './board.js'
 import type { GitHubClient } from './client.js'
 import { surveyEpic } from './epic.js'
-import { checkEntries, claim, createItem, getItem, setStatus, updateItem } from './items.js'
+import { checkEntries, claim, createItem, getItem, linkItem, setStatus, updateItem } from './items.js'
 
 export type ProviderOptions = {
   /**
@@ -102,6 +104,17 @@ export class GitHubBoardProvider implements BoardProvider {
   async update(ref: WorkItemRef, change: ItemChange): Promise<BoardItem> {
     try {
       return await updateItem(this.client, this.board, ref, change, { dryRun: this.dryRun })
+    } finally {
+      this.invalidate()
+    }
+  }
+
+  // A parent is part of BoardSnapshot, so this write stales the cache as `update` does. Invalidated
+  // in a `finally` above all for PartialLinkError and ProseOutOfStepError: a call that landed in
+  // part is exactly the one whose board state is in doubt.
+  async link(ref: WorkItemRef, change: LinkChange): Promise<LinkedItem> {
+    try {
+      return await linkItem(this.client, this.board, ref, change, { dryRun: this.dryRun })
     } finally {
       this.invalidate()
     }

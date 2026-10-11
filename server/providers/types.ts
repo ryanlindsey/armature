@@ -16,6 +16,12 @@ export type BoardItem = {
    * ItemDetail. GitHub: `Issue.updatedAt`.
    */
   version?: string
+  /**
+   * Items this one is blocked by. Optional because the board survey does not read them and a
+   * tracker without dependencies has none to report; required on ItemDetail, and on LinkedItem,
+   * since the blockers are the point of a link change's result.
+   */
+  blockedBy?: WorkItemRef[]
 }
 
 /**
@@ -44,7 +50,10 @@ export type LinkChange = {
  * An item after a link change, with every canonical `Depends on` line the call added or removed.
  * Lines beyond the refs the caller named are drift it repaired.
  */
-export type LinkedItem = BoardItem & { dependsOn: { added: WorkItemRef[]; removed: WorkItemRef[] } }
+export type LinkedItem = BoardItem & {
+  blockedBy: WorkItemRef[]
+  dependsOn: { added: WorkItemRef[]; removed: WorkItemRef[] }
+}
 
 /**
  * One task-list entry in a work item's body.
@@ -189,4 +198,14 @@ export interface BoardProvider {
    * item unchanged.
    */
   update(ref: WorkItemRef, change: ItemChange): Promise<BoardItem>
+  /**
+   * Add or remove blockers and set, replace or clear the parent, then bring the item's
+   * `Depends on` lines into step with all of its blockers, reading every change back.
+   *
+   * Optional, like `check` and unlike `update`: keeping prose in step with links is a
+   * Markdown-body shape, and an adapter for a tracker that cannot do that declines the method
+   * rather than half-implementing it — links changed with the prose left behind would make the
+   * prerequisite check read a sequence that is not there. dispatch reports the absence by name.
+   */
+  link?(ref: WorkItemRef, change: LinkChange): Promise<LinkedItem>
 }

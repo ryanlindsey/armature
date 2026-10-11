@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  ChecklistUnsupportedError, dispatch, EpicUnsupportedError, InvalidArgumentError, makeRefResolver, TOOLS,
+  ChecklistUnsupportedError, dispatch, EpicUnsupportedError, InvalidArgumentError, LinkUnsupportedError,
+  makeRefResolver, TOOLS,
 } from '../server/index.js'
 import { AliasConflictError } from '../server/providers/github/aliases.js'
 import type { SiblingConfigReader } from '../server/providers/github/aliases.js'
@@ -1019,6 +1020,233 @@ describe('item_update', () => {
 
   it('leaves a real result unmarked', async () => {
     const result = await dispatch(withUpdate(), 'item_update', { ...base, title: 'New title' }, opts)
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBeUndefined()
+  })
+})
+
+describe('item_link', () => {
+  const REF = { owner: 'acme', repo: 'web', number: 7 }
+  const B5 = { owner: 'acme', repo: 'web', number: 5 }
+  const B6 = { owner: 'acme', repo: 'api', number: 6 }
+  const EPIC = { owner: 'acme', repo: 'web', number: 1 }
+  const before = { ref: REF, title: 'Item 7', status: 'Todo', parent: null, blockedBy: [B5] }
+  const linked = {
+    ref: REF, title: 'Item 7', status: 'Todo', parent: EPIC, blockedBy: [B6],
+    dependsOn: { added: [B6], removed: [B5] },
+  }
+  const withLink = (after: unknown = linked) =>
+    makeProvider({
+      getItem: vi.fn().mockResolvedValue(before),
+      link: vi.fn().mockResolvedValue(after),
+    })
+  const opts = { dryRun: false, logWrite: () => {} }
+  const base = { ref: 'acme/web#7' }
+
+  it('is advertised with exactly the arguments the handler accepts', () => {
+    const tool = TOOLS.find((t) => t.name === 'item_link')
+    expect(tool).toBeDefined()
+    expect(Object.keys(tool!.inputSchema.properties)).toEqual([
+      'ref', 'addBlockedBy', 'removeBlockedBy', 'parent', 'clearParent',
+    ])
+    expect(tool!.inputSchema.required).toEqual(['ref'])
+  })
+
+  it('describes clearParent, the Depends on sync, idempotence and the read-back', () => {
+    const tool = TOOLS.find((t) => t.name === 'item_link')!
+    expect(tool.description).toMatch(/clearParent/)
+    expect(tool.description).toMatch(/Depends on/)
+    expect(tool.description).toMatch(/Idempotent/)
+    expect(tool.description).toMatch(/reading the item back/)
+  })
+
+  it('refuses a bare issue number as its ref', async () => {
+    const provider = withLink()
+    await expect(
+      dispatch(provider, 'item_link', { ref: 7, addBlockedBy: ['acme/web#5'] }, opts),
+    ).rejects.toThrow(BareRefError)
+    expect(provider.link).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a bare number in addBlockedBy', { addBlockedBy: [60] }],
+    ['a bare number in removeBlockedBy', { removeBlockedBy: ['acme/web#5', 60] }],
+    ['a bare number as parent', { parent: 9 }],
+    // An empty string is no reference at all, refused as item_create refuses `parent: ""`.
+    ['an empty parent', { parent: '' }],
+  ])('refuses %s with BareRefError, and writes nothing', async (_label, args) => {
+    const provider = withLink()
+    await expect(dispatch(provider, 'item_link', { ...base, ...args }, opts)).rejects.toThrow(BareRefError)
+    expect(provider.link).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['an addBlockedBy that is not an array', { addBlockedBy: 'acme/web#1' }],
+    ['a removeBlockedBy that is not an array', { removeBlockedBy: 'acme/web#1' }],
+    ['a non-string element', { addBlockedBy: [{ ref: 'acme/web#1' }] }],
+    ['a non-boolean clearParent', { clearParent: 'yes' }],
+    ['a parent together with clearParent', { parent: 'acme/web#1', clearParent: true }],
+    ['no change at all', {}],
+    ['only empty lists', { addBlockedBy: [], removeBlockedBy: [] }],
+    ['clearParent false and nothing else', { clearParent: false }],
+    ['nulls throughout', { addBlockedBy: null, removeBlockedBy: null, parent: null, clearParent: null }],
+  ])('refuses %s, and writes nothing', async (_label, args) => {
+    const provider = withLink()
+    await expect(dispatch(provider, 'item_link', { ...base, ...args }, opts)).rejects.toThrow(InvalidArgumentError)
+    expect(provider.link).not.toHaveBeenCalled()
+    expect(provider.getItem).not.toHaveBeenCalled()
+  })
+
+  it('names the parent when it is sent with clearParent', async () => {
+    await expect(
+      dispatch(withLink(), 'item_link', { ...base, parent: 'acme/web#1', clearParent: true }, opts),
+    ).rejects.toThrow(/"parent" to be absent when clearParent is true/)
+  })
+
+  it('names every field when no change is asked for', async () => {
+    await expect(dispatch(withLink(), 'item_link', base, opts)).rejects.toThrow(
+      /addBlockedBy, removeBlockedBy, parent or clearParent" to be at least one change/,
+    )
+  })
+
+  it('reports by name when the provider cannot link, saying nothing was written', async () => {
+    const error = await dispatch(makeProvider(), 'item_link', { ...base, addBlockedBy: ['acme/web#5'] }, opts)
+      .catch((e: Error) => e)
+    expect(error).toBeInstanceOf(LinkUnsupportedError)
+    expect((error as Error).message).toMatch(/Nothing was written/)
+    expect((error as Error).message).toMatch(/tracker itself/)
+  })
+
+  // A malformed call is reported as malformed, not as unsupported.
+  it('validates every argument before checking the capability', async () => {
+    for (const args of [
+      { ref: 7, addBlockedBy: ['acme/web#5'] },
+      { ...base, addBlockedBy: [60] },
+      { ...base, removeBlockedBy: 'acme/web#5' },
+      { ...base, parent: 9 },
+      { ...base, clearParent: 'yes' },
+      { ...base, parent: 'acme/web#1', clearParent: true },
+      base,
+    ]) {
+      const error = await dispatch(makeProvider(), 'item_link', args, opts).catch((e: Error) => e)
+      expect(error).not.toBeInstanceOf(LinkUnsupportedError)
+      expect([BareRefError, InvalidArgumentError].some((E) => error instanceof E)).toBe(true)
+    }
+  })
+
+  it('hands the provider every resolved ref, through the resolver', async () => {
+    const provider = withLink()
+    const resolveRef = vi.fn(async (token: string) => parseRef(token))
+    await dispatch(
+      provider, 'item_link',
+      { ...base, addBlockedBy: ['acme/api#6'], removeBlockedBy: ['acme/web#5'], parent: 'acme/web#1' },
+      { ...opts, resolveRef },
+    )
+    expect(resolveRef.mock.calls.map((c) => c[0])).toEqual(['acme/web#7', 'acme/api#6', 'acme/web#5', 'acme/web#1'])
+    expect(provider.link).toHaveBeenCalledWith(REF, {
+      addBlockedBy: [B6], removeBlockedBy: [B5], parent: EPIC,
+    })
+  })
+
+  it('hands clearParent to the provider as parent: null', async () => {
+    const provider = withLink()
+    await dispatch(provider, 'item_link', { ...base, clearParent: true }, opts)
+    expect(provider.link).toHaveBeenCalledWith(REF, { parent: null })
+  })
+
+  it('hands the provider no parent key when neither parent nor clearParent was given', async () => {
+    const provider = withLink()
+    await dispatch(provider, 'item_link', { ...base, addBlockedBy: ['acme/api#6'] }, opts)
+    const change = (provider.link as ReturnType<typeof vi.fn>).mock.calls[0]![1]
+    expect(change).toEqual({ addBlockedBy: [B6] })
+    expect('parent' in change).toBe(false)
+  })
+
+  it('returns what the provider read back', async () => {
+    const result = await dispatch(withLink(), 'item_link', { ...base, addBlockedBy: ['acme/api#6'] }, opts)
+    expect(textOf(result)).toEqual(linked)
+  })
+
+  it('logs the blockers, the parent and the Depends on lines that changed', async () => {
+    const lines: string[] = []
+    await dispatch(
+      withLink(), 'item_link',
+      { ...base, addBlockedBy: ['acme/api#6'], removeBlockedBy: ['acme/web#5'], parent: 'acme/web#1' },
+      { ...opts, logWrite: (l) => lines.push(l) },
+    )
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([
+      { ref: 'acme/web#7', field: 'Blocked by', before: 'acme/web#5', after: 'acme/api#6', dryRun: false },
+      { ref: 'acme/web#7', field: 'Parent', before: null, after: 'acme/web#1', dryRun: false },
+      { ref: 'acme/web#7', field: 'Depends on', before: 'acme/web#5', after: 'acme/api#6', dryRun: false },
+    ])
+  })
+
+  it('writes null for an empty side, and comma-joins a list', async () => {
+    const lines: string[] = []
+    await dispatch(
+      withLink({
+        ...before, blockedBy: [B5, B6], dependsOn: { added: [B6], removed: [] },
+      }),
+      'item_link', { ...base, addBlockedBy: ['acme/api#6'] },
+      { ...opts, logWrite: (l) => lines.push(l) },
+    )
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([
+      { field: 'Blocked by', before: 'acme/web#5', after: 'acme/web#5, acme/api#6' },
+      { field: 'Depends on', before: null, after: 'acme/api#6' },
+    ])
+  })
+
+  it('logs nothing for what did not change', async () => {
+    const lines: string[] = []
+    // A repeat call: the links were already as asked, and the prose already in step.
+    await dispatch(
+      withLink({ ...before, dependsOn: { added: [], removed: [] } }),
+      'item_link', { ...base, addBlockedBy: ['acme/web#5'] },
+      { ...opts, logWrite: (l) => lines.push(l) },
+    )
+    expect(lines).toEqual([])
+  })
+
+  it('logs a Depends on repair even when the links did not change', async () => {
+    const lines: string[] = []
+    await dispatch(
+      withLink({ ...before, dependsOn: { added: [B5], removed: [] } }),
+      'item_link', { ...base, addBlockedBy: ['acme/web#5'] },
+      { ...opts, logWrite: (l) => lines.push(l) },
+    )
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([
+      { field: 'Depends on', before: null, after: 'acme/web#5' },
+    ])
+  })
+
+  it('logs a cleared parent', async () => {
+    const lines: string[] = []
+    await dispatch(
+      makeProvider({
+        getItem: vi.fn().mockResolvedValue({ ...before, parent: EPIC }),
+        link: vi.fn().mockResolvedValue({ ...before, parent: null, dependsOn: { added: [], removed: [] } }),
+      }),
+      'item_link', { ...base, clearParent: true },
+      { ...opts, logWrite: (l) => lines.push(l) },
+    )
+    expect(lines.map((l) => JSON.parse(l))).toMatchObject([
+      { field: 'Parent', before: 'acme/web#1', after: null },
+    ])
+  })
+
+  it('marks a dry run, in the result and in every log line', async () => {
+    const lines: string[] = []
+    const result = await dispatch(
+      withLink(), 'item_link',
+      { ...base, addBlockedBy: ['acme/api#6'], removeBlockedBy: ['acme/web#5'], parent: 'acme/web#1' },
+      { dryRun: true, logWrite: (l) => lines.push(l) },
+    )
+    expect((textOf(result) as Record<string, unknown>).dryRun).toBe(true)
+    expect(lines).toHaveLength(3)
+    for (const line of lines) expect(JSON.parse(line).dryRun).toBe(true)
+  })
+
+  it('leaves a real result unmarked', async () => {
+    const result = await dispatch(withLink(), 'item_link', { ...base, addBlockedBy: ['acme/api#6'] }, opts)
     expect((textOf(result) as Record<string, unknown>).dryRun).toBeUndefined()
   })
 })
