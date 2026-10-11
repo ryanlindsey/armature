@@ -282,6 +282,7 @@ export function describeBoardProvider(
       it('refuses a stale version and leaves the item unchanged', async () => {
         const provider = await makeProvider()
         const stale = await provider.getItem(ref)
+        expect(stale.version, 'getItem must report a version for an edit to hand back').toBeDefined()
         // Someone else's edit lands between the read and the write.
         await provider.update(ref, { title: `${stale.title} (theirs)`, expectVersion: stale.version! })
         const current = await provider.getItem(ref)
