@@ -28,6 +28,25 @@ export type BoardItem = {
 export type ItemChange = { title?: string; body?: string; expectVersion: string }
 
 /**
+ * A change to an existing item's links.
+ *
+ * `parent` undefined means leave it, a ref means set or replace it, null means clear it. Not
+ * guarded by a version: a link write is idempotent, so a repeat is a no-op rather than an
+ * overwrite, and the prose that follows it is recomputed from the latest read.
+ */
+export type LinkChange = {
+  addBlockedBy?: WorkItemRef[]
+  removeBlockedBy?: WorkItemRef[]
+  parent?: WorkItemRef | null
+}
+
+/**
+ * An item after a link change, with every canonical `Depends on` line the call added or removed.
+ * Lines beyond the refs the caller named are drift it repaired.
+ */
+export type LinkedItem = BoardItem & { dependsOn: { added: WorkItemRef[]; removed: WorkItemRef[] } }
+
+/**
  * One task-list entry in a work item's body.
  *
  * `heading` is the nearest preceding ATX heading, and is context for the caller's judgment, not

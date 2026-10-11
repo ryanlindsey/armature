@@ -9,6 +9,9 @@ import {
   ADD_SUB_ISSUE,
   ITEM_QUERY,
   PARENT_ID,
+  REMOVE_BLOCKED_BY,
+  REMOVE_SUB_ISSUE,
+  SET_PARENT,
   UPDATE_ISSUE,
   UPDATE_ISSUE_BODY,
 } from '../../server/providers/github/items.js'
@@ -177,4 +180,22 @@ describe.skipIf(!enabled || !owner || !number || !repo)('queries GitHub actually
     expect(error!.message).toMatch(/could not resolve to a node/i)
     expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
   })
+
+  // The three documents linkItem adds, checked exactly as ADD_SUB_ISSUE is: unresolvable ids reach
+  // execution only if the document validated, and nothing is linked, unlinked or moved.
+  for (const [name, doc, vars] of [
+    ['REMOVE_BLOCKED_BY', REMOVE_BLOCKED_BY, { blocked: 'I_kwDOAAAAAAAAAAAAAAAAAA', blocker: 'I_kwDOAAAAAAAAAAAAAAAAAA' }],
+    ['SET_PARENT', SET_PARENT, { parent: 'I_kwDOAAAAAAAAAAAAAAAAAA', child: 'I_kwDOAAAAAAAAAAAAAAAAAA' }],
+    ['REMOVE_SUB_ISSUE', REMOVE_SUB_ISSUE, { parent: 'I_kwDOAAAAAAAAAAAAAAAAAA', child: 'I_kwDOAAAAAAAAAAAAAAAAAA' }],
+  ] as const) {
+    it(`accepts ${name} against the live schema, without changing anything`, async () => {
+      const error = await (await client())
+        .graphql<any>(doc, { ...vars })
+        .then(() => null)
+        .catch((e: Error) => e)
+      expect(error, 'a mutation on unresolvable ids must not succeed').not.toBeNull()
+      expect(error!.message).toMatch(/could not resolve to a node/i)
+      expect(error!.message).not.toMatch(/doesn't exist|does not exist on type|unknown argument/i)
+    })
+  }
 })
