@@ -206,6 +206,9 @@ export interface BoardProvider {
    * Markdown-body shape, and an adapter for a tracker that cannot do that declines the method
    * rather than half-implementing it — links changed with the prose left behind would make the
    * prerequisite check read a sequence that is not there. dispatch reports the absence by name.
+   *
+   * An adapter that implements this must report `blockedBy` from `getItem`: dispatch logs the
+   * blocker change against it, and an absent list would log a change on every call.
    */
   link?(ref: WorkItemRef, change: LinkChange): Promise<LinkedItem>
 }

@@ -719,6 +719,8 @@ export async function dispatch(
         log('Parent', before.parent ? formatRef(before.parent) : null, after.parent ? formatRef(after.parent) : null)
       }
       // The lines by ref, never the body: an issue body is too long for a log line and may not be ours.
+      // Unlike the two lines above, a diff rather than two states: `before` holds the lines the call
+      // removed and `after` the lines it added.
       if (after.dependsOn.added.length || after.dependsOn.removed.length) {
         log('Depends on', refsForLog(after.dependsOn.removed), refsForLog(after.dependsOn.added))
       }

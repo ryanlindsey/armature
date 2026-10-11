@@ -131,7 +131,12 @@ const client = {
       const blocked = nodes.find((n) => nodeId(n) === variables.blocked)!
       const blocker = nodes.find((n) => nodeId(n) === variables.blocker)!
       ;(blocked as any).blockedBy = ((blocked as any).blockedBy ?? []).filter(
-        (b: any) => !(b.number === blocker.content.number && b.repository.name === blocker.content.repository.name),
+        (b: any) =>
+          !(
+            b.number === blocker.content.number &&
+            b.repository.name === blocker.content.repository.name &&
+            b.repository.owner.login === blocker.content.repository.owner.login
+          ),
       )
       return { removeBlockedBy: { issue: { id: variables.blocked } } }
     }
